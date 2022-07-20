@@ -161,7 +161,7 @@ def _ingest_raw_data(data: IA):
             # ToT is 10 bits
             ToT[photon_offset] = (msg >> np.uint(20)) & np.uint(0x3FF)
             # FToA is 4 bits
-            FToA[photon_offset] = (msg >> np.uint(16)) & np.uint(0xF)
+            l_FToA = FToA[photon_offset] = (msg >> np.uint(16)) & np.uint(0xF)
             # SPIDR time is 16 bits
             SPIDR[photon_offset] = msg & np.uint(0xFFFF)
             # chip number (this is a constant)
@@ -169,6 +169,11 @@ def _ingest_raw_data(data: IA):
             # heartbeat time
             basetime[photon_offset] = heartbeat_time
 
+            ToA_coarse = (SPIDR[photon_offset] << np.uint(14)) | ToA[photon_offset]
+            globaltime = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
+            # TODO the c++ code deals with jumps (presumable roll over?)
+            # TODO the c++ code as shifts due to columns in the LSB
+            timestamp[photon_offset] = ((globaltime << np.uint(12)) - (l_FToA << np.uint(8))) * 25
             photon_offset += 1
             msg_run_count += 1
         elif typ == 3:
