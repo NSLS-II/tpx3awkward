@@ -5,7 +5,7 @@ from typing import TypeVar, Union, Dict
 import numba
 
 IA = NDArray[np.uint64]
-UnSigned = TypeVar("I", IA, np.uint64)
+UnSigned = TypeVar("UnSigned", IA, np.uint64)
 
 
 def raw_as_numpy(fpath: Union[str, Path]) -> IA:
