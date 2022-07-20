@@ -62,19 +62,18 @@ def classify_array(data: IA) -> NDArray[np.uint8]:
 
 @numba.jit(nopython=True)
 def _ingest_raw_data(data: IA):
-    output = np.zeros_like(data, dtype="<u1")
+    types = np.zeros_like(data, dtype="<u1")
     # identify packet headers by magic number (TPX3 as ascii on lowest 8 bytes]
     is_header = is_packet_header(data)
-    output[is_header] = 1
+    types[is_header] = 1
     # get the highest nibble
     nibble = data >> np.uint(60)
     # probably a better way to do this, but brute force!
-    output[~is_header & (nibble == 0xB)] = 2
-    output[~is_header & (nibble == 0x6)] = 3
-    output[~is_header & (nibble == 0x4)] = 4
-    output[~is_header & (nibble == 0x7)] = 5
+    types[~is_header & (nibble == 0xB)] = 2
+    types[~is_header & (nibble == 0x6)] = 3
+    types[~is_header & (nibble == 0x4)] = 4
+    types[~is_header & (nibble == 0x7)] = 5
 
-    types = output
     # drop the mysterious "command" lines and global timestamps for now
     ctypes = types[~((types == 5) | (types == 4))]
     cdata = data[~((types == 5) | (types == 4))]
