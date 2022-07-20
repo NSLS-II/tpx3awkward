@@ -39,11 +39,11 @@ def classify_array(data: IA) -> NDArray[np.uint8]:
 
     0: an unknown type (!!)
     1: packet header (id'd via TPX3 magic number)
-    2: photon event (id'd via 0xb upper nibble)
+    2: photon event (id'd via 0xB upper nibble)
     3: TDC timstamp (id'd via 0x6 upper nibble)
     4: global timestap (id'd via 0x4 upper nibble)
     5: "command" data (id'd via 0x7 upper nibble)
-
+    6: frame driven data (id'd via 0xA upper nibble) (??)
     """
     output = np.zeros_like(data, dtype="<u1")
     # identify packet headers by magic number (TPX3 as ascii on lowest 8 bytes]
@@ -56,6 +56,7 @@ def classify_array(data: IA) -> NDArray[np.uint8]:
     output[~is_header & (nibble == 0x6)] = 3
     output[~is_header & (nibble == 0x4)] = 4
     output[~is_header & (nibble == 0x7)] = 5
+    output[~is_header & (nibble == 0xA)] = 6
 
     return output
 
