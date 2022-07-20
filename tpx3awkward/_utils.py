@@ -146,7 +146,7 @@ def _ingest_raw_data(data: IA):
             # '1111111000000000'
             dcol = (l_pix_addr & np.uint(0xFE00)) >> np.uint(8)
             # '0000000111111000'
-            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(1)
+            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(3)
             rowcol = _shift_xy(
                 chip,
                 # '0000000000000011'
