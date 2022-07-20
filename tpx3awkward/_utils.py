@@ -62,6 +62,28 @@ def classify_array(data: IA) -> NDArray[np.uint8]:
 
 
 @numba.jit(nopython=True)
+def _shift_xy(chip, row, col):
+    # TODO sort out if this needs to be paremeterized
+    out = np.zeros(2, "u4")
+    if chip == 0:
+        out[0] = row
+        out[1] = col + np.uint(256)
+    elif chip == 1:
+        out[0] = np.uint(511) - row
+        out[1] = np.uint(511) - col
+    elif chip == 2:
+        out[0] = np.uint(511) - row
+        out[1] = np.uint(255) - col
+    elif chip == 3:
+        out[0] = row
+        out[1] = col
+    else:
+        # TODO sort out how to get the chip number in here and make numba happy
+        raise RuntimeError("Unknown chip id")
+    return out
+
+
+@numba.jit(nopython=True)
 def _ingest_raw_data(data: IA):
     types = np.zeros_like(data, dtype="<u1")
     # identify packet headers by magic number (TPX3 as ascii on lowest 8 bytes]
@@ -81,7 +103,7 @@ def _ingest_raw_data(data: IA):
     # allocate the return arrays
     x = np.zeros(total_photons, dtype="u4")
     y = np.zeros(total_photons, dtype="u4")
-    pix_addr = np.zeros(total_photons, dtype="u4")
+    pix_addr = np.zeros(total_photons, dtype="u2")
     ToA = np.zeros(total_photons, dtype="u4")
     ToT = np.zeros(total_photons, dtype="u4")
     FToA = np.zeros(total_photons, dtype="u4")
@@ -105,10 +127,22 @@ def _ingest_raw_data(data: IA):
             chip = int(get_block(msg, 8, 32))
             photon_run_count = 0
         elif typ == 2:
-            # pixAddr is 16 bits, guess row-major
-            pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
-            x[photon_offset] = pix_addr[photon_offset] % 256
-            y[photon_offset] = pix_addr[photon_offset] // 256
+            # pixAddr is 16 bits
+            # these names and math are adapted from c++ code
+            l_pix_addr = pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
+            # '1111111000000000'
+            dcol = (l_pix_addr & np.uint(0xFE00)) >> np.uint(8)
+            # '0000000111111000'
+            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(1)
+            rowcol = _shift_xy(
+                chip,
+                # '0000000000000011'
+                spix + (l_pix_addr & np.uint(0x3)),
+                # '0000000000000100'
+                dcol + ((l_pix_addr & np.uint(0x4)) >> np.uint(2)),
+            )
+            x[photon_offset] = rowcol[0]
+            y[photon_offset] = rowcol[1]
             # ToA is 14 bits
             ToA[photon_offset] = (msg >> np.uint(30)) & np.uint(0x3FFF)
             # ToT is 10 bits
