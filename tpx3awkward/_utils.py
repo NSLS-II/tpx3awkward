@@ -142,6 +142,78 @@ def _ingest_raw_data(data: IA):
     return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number
 
 
+@numba.jit(nopython=True)
+def _ingest_raw_data2(data: IA):
+    types = np.zeros_like(data, dtype="<u1")
+    # identify packet headers by magic number (TPX3 as ascii on lowest 8 bytes]
+    is_header = is_packet_header(data)
+    types[is_header] = 1
+    # get the highest nibble
+    nibble = data >> np.uint(60)
+    # probably a better way to do this, but brute force!
+    types[~is_header & (nibble == 0xB)] = 2
+    types[~is_header & (nibble == 0x6)] = 3
+    types[~is_header & (nibble == 0x4)] = 4
+    types[~is_header & (nibble == 0x7)] = 5
+
+    # sort out how many photons we have
+    total_photons = np.sum(types == 2)
+
+    # allocate the return arrays
+    x = np.zeros(total_photons, dtype="u4")
+    y = np.zeros(total_photons, dtype="u4")
+    pix_addr = np.zeros(total_photons, dtype="u4")
+    ToA = np.zeros(total_photons, dtype="u4")
+    ToT = np.zeros(total_photons, dtype="u4")
+    FToA = np.zeros(total_photons, dtype="u4")
+    SPIDR = np.zeros(total_photons, dtype="u4")
+    chip_number = np.zeros(total_photons, dtype="u1")
+
+    photon_offset = 0
+    chip = np.uint(0)
+    # expected_photon_count = np.uint(0)
+    photon_run_count = 0
+    # loop over the packet headers (can not vectorize this with numpy)
+    for j in range(len(data)):
+        msg = data[j]
+        typ = types[j]
+        if typ == 1:
+            # if expected_photon_count != photon_run_count:
+            #    print("missing photons!")
+            # expected_photon_count = int(get_block(msg, 16, 48) // 8)
+            # extract scalar information from the header
+
+            chip = int(get_block(msg, 8, 32))
+            photon_run_count = 0
+        elif typ == 2:
+            # pixAddr is 16 bits, guess row-major
+            pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
+            x[photon_offset] = pix_addr[photon_offset] % 256
+            y[photon_offset] = pix_addr[photon_offset] // 256
+            # ToA is 14 bits
+            ToA[photon_offset] = (msg >> np.uint(30)) & np.uint(0x3FFF)
+            # ToT is 10 bits
+            ToT[photon_offset] = (msg >> np.uint(20)) & np.uint(0x3FF)
+            # FToA is 4 bits
+            FToA[photon_offset] = (msg >> np.uint(16)) & np.uint(0xF)
+            # SPIDR time is 16 bits
+            SPIDR[photon_offset] = msg & np.uint(0xFFFF)
+            # chip number (this is a constant)
+            chip_number[photon_offset] = chip
+            photon_offset += 1
+            photon_run_count += 1
+        elif typ == 3:
+            ...
+        elif typ == 4:
+            ...
+        elif typ == 5:
+            ...
+        else:
+            ...
+
+    return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number
+
+
 def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
@@ -158,5 +230,5 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number".split(","), _ingest_raw_data(data))
+        for k, v in zip("x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number".split(","), _ingest_raw_data2(data))
     }
