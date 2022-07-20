@@ -228,6 +228,3 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
             _ingest_raw_data(data),
         )
     }
-
-
-d = raw_as_numpy("/mnt/store/bnl/cache/chx_timepix/2022/7/18/frames_000001.tpx3")
