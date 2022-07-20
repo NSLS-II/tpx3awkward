@@ -109,18 +109,25 @@ def _ingest_raw_data(data: IA):
     FToA = np.zeros(total_photons, dtype="u4")
     SPIDR = np.zeros(total_photons, dtype="u4")
     chip_number = np.zeros(total_photons, dtype="u1")
+    basetime = np.zeros(total_photons, dtype="u8")
+    timestamp = np.zeros(total_photons, dtype="u8")
 
     photon_offset = 0
     chip = np.uint16(0)
     expected_msg_count = np.uint16(0)
     msg_run_count = np.uint(0)
+
+    heartbeat_lsb = np.uint64(0)
+    heartbeat_msb = np.uint64(0)
+    heartbeat_time = np.uint64(0)
     # loop over the packet headers (can not vectorize this with numpy)
     for j in range(len(data)):
         msg = data[j]
         typ = types[j]
         if typ == 1:
+            # 1: packet header (id'd via TPX3 magic number)
             if expected_msg_count != msg_run_count:
-                print("missing photons!", msg)
+                print("missing messages!", msg)
             # extract scalar information from the header
 
             # "number of pixels in chunk" is given in bytes not words
@@ -129,7 +136,10 @@ def _ingest_raw_data(data: IA):
             # what chip we are on
             chip = np.uint8(get_block(msg, 8, 32))
             msg_run_count = 0
-        elif typ == 2:
+        elif typ == 2 or typ == 6:
+            #  2: photon event (id'd via 0xB upper nibble)
+            #  6: frame driven data (id'd via 0xA upper nibble) (??)
+
             # pixAddr is 16 bits
             # these names and math are adapted from c++ code
             l_pix_addr = pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
@@ -156,18 +166,40 @@ def _ingest_raw_data(data: IA):
             SPIDR[photon_offset] = msg & np.uint(0xFFFF)
             # chip number (this is a constant)
             chip_number[photon_offset] = chip
+            # heartbeat time
+            basetime[photon_offset] = heartbeat_time
+
             photon_offset += 1
             msg_run_count += 1
         elif typ == 3:
+            #  3: TDC timstamp (id'd via 0x6 upper nibble)
+            # TODO: handle these!
             msg_run_count += 1
         elif typ == 4:
+            #  4: global timestap (id'd via 0x4 upper nibble)
+            subheader = (msg >> np.uint(56)) & np.uint(0x0F)
+            if subheader == 0x4:
+                # timer lsb, 32 bits of time
+                heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
+            elif subheader == 0x5:
+                # timer msb
+
+                time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
+                heartbeat_msb = time_msg << np.uint(32)
+                # TODO the c++ code has large jump detection, do not understand why
+                heartbeat_time = heartbeat_msb | heartbeat_lsb
+            else:
+                raise Exception("unknown header")
+
             msg_run_count += 1
         elif typ == 5:
+            #  5: "command" data (id'd via 0x7 upper nibble)
+            # TODO handle this!
             msg_run_count += 1
         else:
             raise Exception("Not supported")
 
-    return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number
+    return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number, basetime, timestamp
 
 
 def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
@@ -186,5 +218,11 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number".split(","), _ingest_raw_data(data))
+        for k, v in zip(
+            "x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number, basetime, timestamp".split(","),
+            _ingest_raw_data(data),
+        )
     }
+
+
+d = raw_as_numpy("/mnt/store/bnl/cache/chx_timepix/2022/7/18/frames_000001.tpx3")
