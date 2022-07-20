@@ -111,21 +111,24 @@ def _ingest_raw_data(data: IA):
     chip_number = np.zeros(total_photons, dtype="u1")
 
     photon_offset = 0
-    chip = np.uint(0)
-    # expected_photon_count = np.uint(0)
-    photon_run_count = 0
+    chip = np.uint16(0)
+    expected_msg_count = np.uint16(0)
+    msg_run_count = np.uint(0)
     # loop over the packet headers (can not vectorize this with numpy)
     for j in range(len(data)):
         msg = data[j]
         typ = types[j]
         if typ == 1:
-            # if expected_photon_count != photon_run_count:
-            #    print("missing photons!")
-            # expected_photon_count = int(get_block(msg, 16, 48) // 8)
+            if expected_msg_count != msg_run_count:
+                print("missing photons!", msg)
             # extract scalar information from the header
 
-            chip = int(get_block(msg, 8, 32))
-            photon_run_count = 0
+            # "number of pixels in chunk" is given in bytes not words
+            # and means all words in the chunk, not just "photons"
+            expected_msg_count = get_block(msg, 16, 48) // 8
+            # what chip we are on
+            chip = np.uint8(get_block(msg, 8, 32))
+            msg_run_count = 0
         elif typ == 2:
             # pixAddr is 16 bits
             # these names and math are adapted from c++ code
@@ -154,15 +157,15 @@ def _ingest_raw_data(data: IA):
             # chip number (this is a constant)
             chip_number[photon_offset] = chip
             photon_offset += 1
-            photon_run_count += 1
+            msg_run_count += 1
         elif typ == 3:
-            ...
+            msg_run_count += 1
         elif typ == 4:
-            ...
+            msg_run_count += 1
         elif typ == 5:
-            ...
+            msg_run_count += 1
         else:
-            ...
+            raise Exception("Not supported")
 
     return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number
 
