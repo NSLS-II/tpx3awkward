@@ -25,3 +25,8 @@ Reference Implementations
 
 * https://github.com/svihra/TimePix3/blob/master/dataprocess.cpp
 * https://github.com/emx77/tpx3-to-root/blob/master/tpx3_to_root.cpp
+
+Docs
+----
+
+* https://www.quantastro.bnl.gov/node/64
