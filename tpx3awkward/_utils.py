@@ -170,10 +170,17 @@ def _ingest_raw_data(data: IA):
             basetime[photon_offset] = heartbeat_time
 
             ToA_coarse = (SPIDR[photon_offset] << np.uint(14)) | ToA[photon_offset]
+            pixelbits = int((ToA_coarse >> np.uint(28)) & np.uint(0x3))
+            heartbeat_time_bits = int((heartbeat_time >> np.uint(28)) & np.uint(0x3))
+            diff = heartbeat_time_bits - pixelbits
+            if diff == 1 or diff == -3:
+                heartbeat_time -= np.uint(0x10000000)
+            elif diff == -1 or diff == 3:
+                heartbeat_time += np.uint(0x10000000)
             globaltime = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
-            # TODO the c++ code deals with jumps (presumable roll over?)
+
             # TODO the c++ code as shifts due to columns in the LSB
-            timestamp[photon_offset] = ((globaltime << np.uint(12)) - (l_FToA << np.uint(8))) * 25
+            timestamp[photon_offset] = ((globaltime << np.uint(12)) - (l_FToA << np.uint(8)))
             photon_offset += 1
             msg_run_count += 1
         elif typ == 3:
