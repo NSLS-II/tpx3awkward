@@ -180,7 +180,7 @@ def _ingest_raw_data(data: IA):
             globaltime = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
 
             # TODO the c++ code as shifts due to columns in the LSB
-            timestamp[photon_offset] = ((globaltime << np.uint(12)) - (l_FToA << np.uint(8)))
+            timestamp[photon_offset] = (globaltime << np.uint(12)) - (l_FToA << np.uint(8))
             photon_offset += 1
             msg_run_count += 1
         elif typ == 3:
