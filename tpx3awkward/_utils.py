@@ -145,7 +145,7 @@ def _ingest_raw_data(data: IA):
             # pixAddr is 16 bits
             # these names and math are adapted from c++ code
             l_pix_addr = pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
-            # This is layed out 16ibts which are 2 interleaved 8 bit unsigned ints
+            # This is laid out 16ibts which are 2 interleaved 8 bit unsigned ints
             #  CCCCCCCRRRRRRCRR
             #  |dcol ||spix|^||
             #  | 7   || 6  |1|2
