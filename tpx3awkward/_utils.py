@@ -105,7 +105,7 @@ def _ingest_raw_data(data: IA):
     y = np.zeros(total_photons, dtype="u2")
     pix_addr = np.zeros(total_photons, dtype="u2")
     ToA = np.zeros(total_photons, dtype="u2")
-    ToT = np.zeros(total_photons, dtype="u2")
+    ToT = np.zeros(total_photons, dtype="u4")
     FToA = np.zeros(total_photons, dtype="u2")
     SPIDR = np.zeros(total_photons, dtype="u2")
     chip_number = np.zeros(total_photons, dtype="u1")
@@ -170,7 +170,8 @@ def _ingest_raw_data(data: IA):
             # ToA is 14 bits
             ToA[photon_offset] = (msg >> np.uint(30)) & np.uint(0x3FFF)
             # ToT is 10 bits
-            ToT[photon_offset] = (msg >> np.uint(20)) & np.uint(0x3FF)
+            # report in ns
+            ToT[photon_offset] = ((msg >> np.uint(20)) & np.uint(0x3FF)) * 25
             # FToA is 4 bits
             l_FToA = FToA[photon_offset] = (msg >> np.uint(16)) & np.uint(0xF)
             # SPIDR time is 16 bits
