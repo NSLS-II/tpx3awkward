@@ -165,8 +165,8 @@ def _ingest_raw_data(data: IA):
                 # '0000000000000100'
                 dcol + ((l_pix_addr & np.uint(0x4)) >> np.uint(2)),
             )
-            x[photon_offset] = rowcol[0]
-            y[photon_offset] = rowcol[1]
+            col = x[photon_offset] = rowcol[1]
+            y[photon_offset] = rowcol[0]
             # ToA is 14 bits
             ToA[photon_offset] = (msg >> np.uint(30)) & np.uint(0x3FFF)
             # ToT is 10 bits
