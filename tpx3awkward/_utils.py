@@ -191,8 +191,15 @@ def _ingest_raw_data(data: IA):
                 heartbeat_time += np.uint(0x10000000)
             globaltime = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
 
-            # TODO the c++ code as shifts due to columns in the LSB
+
             timestamp[photon_offset] = (globaltime << np.uint(12)) - (l_FToA << np.uint(8))
+            # correct for phase shift
+            phase = np.uint((col / 2) % 16)
+            if phase == 0:
+                timestamp[photon_offset] += (16 << 8)
+            else:
+                timestamp[photon_offset] += (phase << 8)
+
             photon_offset += 1
             msg_run_count += 1
         elif typ == 3:
