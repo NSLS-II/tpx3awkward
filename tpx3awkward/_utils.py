@@ -140,17 +140,28 @@ def _ingest_raw_data(data: IA):
             #  2: photon event (id'd via 0xB upper nibble)
             #  6: frame driven data (id'd via 0xA upper nibble) (??)
 
+            # |
+
             # pixAddr is 16 bits
             # these names and math are adapted from c++ code
             l_pix_addr = pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
+            # This is layed out 16ibts which are 2 interleaved 8 bit unsigned ints
+            #  CCCCCCCRRRRRRCRR
+            #  |dcol ||spix|^||
+            #  | 7   || 6  |1|2
+            #
+            # The high 7 bits of the column
             # '1111111000000000'
             dcol = (l_pix_addr & np.uint(0xFE00)) >> np.uint(8)
+            # The high 6 bits of the row
             # '0000000111111000'
-            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(3)
+            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(1)
             rowcol = _shift_xy(
                 chip,
+                # add the low 2 bits of the row
                 # '0000000000000011'
                 spix + (l_pix_addr & np.uint(0x3)),
+                # add the low 1 bit of the column
                 # '0000000000000100'
                 dcol + ((l_pix_addr & np.uint(0x4)) >> np.uint(2)),
             )
