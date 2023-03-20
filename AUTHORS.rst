@@ -10,4 +10,4 @@ Maintainer
 Contributors
 ------------
 
-* Justin Goodrich <jgoodrich@bnl.gov)
+* Justin Goodrich <jgoodrich@bnl.gov>
