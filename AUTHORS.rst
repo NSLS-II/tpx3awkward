@@ -10,4 +10,4 @@ Maintainer
 Contributors
 ------------
 
-None yet. Why not be the first? See: CONTRIBUTING.rst
+* Justin Goodrich <jgoodrich@bnl.gov)
