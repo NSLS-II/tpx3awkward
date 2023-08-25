@@ -8,3 +8,5 @@ concurrent.futures
 multiprocessing
 time
 tdqm
+gc
+pyCHX
