@@ -2,7 +2,7 @@ import os
 import numpy as np
 from pathlib import Path
 from numpy.typing import NDArray
-from typing import TypeVar, Union, Dict, Set
+from typing import TypeVar, Union, Dict, Set, List
 import numba
 import pandas as pd
 from scipy.spatial import KDTree
@@ -10,6 +10,8 @@ import concurrent.futures
 import multiprocessing
 import time
 from tqdm import tqdm
+from pyCHX.chx_packages import db, get_sid_filenames
+import gc
 
 IA = NDArray[np.uint64]
 UnSigned = TypeVar("UnSigned", IA, np.uint64)
@@ -261,6 +263,12 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
         )
     }
 
+# ^-- tom wrote
+# v-- justin wrote
+""" 
+Some basic functions that help take the initial output of ingest_raw_data and finish the processing.
+"""
+
 
 def raw_to_sorted_df(fpath: Union[str, Path]) -> pd.DataFrame:
     """
@@ -319,7 +327,9 @@ def drop_zero_tot(df: pd.DataFrame) -> pd.DataFrame:
     return fdf
 
 
-# The next set of code is dedicated to performing clustering and centroiding on the raw data.
+"""
+Functions to help perform clustering and centroiding on raw data.
+"""
 TIMESTAMP_VALUE = ((1e-9) / 4096) * 25
 MICROSECOND = 10 ** (-6)
 
@@ -355,16 +365,18 @@ def neighbor_set_from_df(
     events = np.array(
         df[["t", "x", "y", "ToT", "t"]].values
     )  # first three columns are for search radius of KDTree
-    events[:, 0] = np.floor_divide(events[:, 0], DEFAULT_CLUSTER_TW)  # bin by the time window
+    events[:, 0] = np.floor_divide(events[:, 0], tw)  # bin by the time window
     tree = KDTree(events[:, :3])  # generate KDTree based off the coordinates
     neighbors = tree.query_ball_tree(
-        tree, DEFAULT_CLUSTER_RADIUS
+        tree, radius
     )  # compare tree against itself to find neighbors within the search radius
     clusters = set(tuple(n) for n in neighbors)  # turn the list of lists into a set of tuples
     return events, clusters
 
 
-def cluster_stats(clusters: Set[tuple[int]]) -> tuple[int]:
+def cluster_stats(
+    clusters: Set[tuple[int]]
+) -> tuple[int]:
     """
     Determines basic information about cluster information, such as the number of clusters and size of the largest cluster.
 
@@ -463,7 +475,9 @@ def cluster_arr_to_cent(
     return t, xc, yc, ToT_max, ToT_sum, n
 
 
-def ingest_cent_data(data: np.ndarray) -> Dict[str, np.ndarray]:
+def ingest_cent_data(
+    data: np.ndarray
+) -> Dict[str, np.ndarray]:
     """
     Performs the centroiding of a group of clusters.
 
@@ -486,7 +500,9 @@ def ingest_cent_data(data: np.ndarray) -> Dict[str, np.ndarray]:
     }
 
 
-def cent_to_numpy(cluster_arr, events, num_clusters, max_cluster) -> Dict[str, np.ndarray]:
+def cent_to_numpy(
+    cluster_arr: np.ndarray, events: int, num_clusters: int, max_cluster: int
+) -> Dict[str, np.ndarray]:
     """
     Wrapper function to perform ingest_cent_data(cluster_arr_to_cent())
 
@@ -494,6 +510,8 @@ def cent_to_numpy(cluster_arr, events, num_clusters, max_cluster) -> Dict[str, n
     ----------
     cluster_arr : np.ndarray
         The array of cluster events from create_cluster_arr()
+    events : int
+        Number of photon events
     num_clusters : int
         The total number of clusters
     max_cluster : int
@@ -507,7 +525,9 @@ def cent_to_numpy(cluster_arr, events, num_clusters, max_cluster) -> Dict[str, n
     return ingest_cent_data(cluster_arr_to_cent(cluster_arr, events, num_clusters, max_cluster))
 
 
-def cent_to_df(cd_np: Dict[str, np.ndarray]) -> pd.DataFrame:
+def cent_to_df(
+    cd_np: Dict[str, np.ndarray]
+) -> pd.DataFrame:
     """
     Returns the centroided dataframe from the zipped inputs.
 
@@ -525,7 +545,9 @@ def cent_to_df(cd_np: Dict[str, np.ndarray]) -> pd.DataFrame:
     return cent_df.sort_values("t").reset_index(drop=True)
 
 
-def raw_df_to_cluster_df(raw_df: pd.DataFrame) -> pd.DataFrame:
+def raw_df_to_cluster_df(
+    raw_df: pd.DataFrame
+) -> pd.DataFrame:
     """
     Uses functions defined herein to take Dataframe of raw data and return dataframe of clustered data.
 
@@ -546,245 +568,9 @@ def raw_df_to_cluster_df(raw_df: pd.DataFrame) -> pd.DataFrame:
     return cent_to_df(cent_to_numpy(cluster_arr, events, num_clusters, max_cluster))
 
 
-def process_raw_data(
-    fpath: Union[str, Path],
-    cluster: bool = True,
-    sid: Union[str, int, None] = None,
-    save_dir: Union[str, Path, None] = None,
-    save_raw: bool = False,
-    save_cent: bool = False,
-    prints: bool = False,
-) -> tuple[pd.DataFrame, Union[pd.DataFrame, None]]:
-    """
-    Loads raw data from a .tpx3 file, with options to cluster/centroid, and save the data (raw and/or centroids) in .h5 files in specified output directory.
-
-    Parameters
-    ----------
-    fpath : Union[str, Path]
-        Filepath of the .tpx3 file to be processed
-    cluster : bool = True
-        Whether to perform clustering/centroiding on the raw data.
-    sid : Union[str, None] = None
-        The sid of the raw id, to be used in the output file name(s).
-    save_dir : Union[str, Path, None] = None
-        The directory to save output .h5 files.
-    save_raw : bool = False
-        Whether or not to save the raw data to .h5.
-    save_cent : bool = False
-        Whether or not to save the centroided data to .h5.
-    prints : bool = False
-        Whether or not to print out status updates during execution.
-
-
-    Returns
-    -------
-    tuple[pd.DataFrame, None]
-       Pandas DataFrame of the raw data and the clustered/centroided data, if generated.
-    """
-    if not isinstance(fpath, (str, Path)):
-        raise TypeError("file_path must be a string or a path-like object")
-
-    path_list = os.path.split(fpath)
-    path_dir = path_list[0]
-    fname = path_list[1]
-    fname_str = os.path.splitext(fname)[0]
-    fname_ext = os.path.splitext(fpath)[1]
-
-    if not fpath.endswith(".tpx3") or not os.path.isfile(fpath):
-        raise ValueError("file_path does not point to a file with a .tpx3 extension")
-
-    if save_raw or save_cent:
-        if not os.path.isdir(save_dir):
-            raise ValueError("save_dir is not a valid path")
-
-    fsize = os.path.getsize(fpath) / (1 * (10**6))
-
-    if prints:
-        print('--> Loading "{}" ({} MB, sid="{}"): {}'.format(fpath, fsize, sid, time.ctime()))
-    if fsize > 0:
-        rs_df = raw_to_sorted_df(fpath)
-        raw_length = rs_df.shape[0]
-        if prints:
-            print("--> {} .tpx3 unpacked, {} events: {}".format(sid, raw_length, time.ctime()))
-
-        if save_raw:
-            save_fname = "{}_raw.h5".format(sid)
-            save_path = save_dir + save_fname
-            with pd.HDFStore(save_path, mode="w") as store:
-                store.put("rs_df", rs_df)
-            if prints:
-                print('--> Saved raw to "{}" (sid="{}"): {}'.format(save_path, sid, time.ctime()))
-
-        if cluster:
-            cent_df = raw_df_to_cluster_df(rs_df)
-            cent_length = cent_df.shape[0]
-
-            if prints:
-                print('--> Centroids computed (sid="{}"):, {} clusters: {}'.format(sid, cent_length, time.ctime()))
-
-            if save_cent:
-                save_fname = "{}_centroid.h5".format(sid)
-                save_path = save_dir + save_fname
-                if prints:
-                    print('--> Saving centroid to "{}" (sid="{}"): {}'.format(save_path, sid, time.ctime()))
-                with pd.HDFStore(save_path, mode="w") as store:
-                    store.put("c_df", cent_df)
-
-        else:
-            c_df = None
-
-    else:
-        if prints:
-            print('--> "{}" is empty, skipping.'.format(fpath))
-
-    return rs_df, c_df
-
-
-def _process_raw_data(args):
-    """
-    Helper(?) function to call process_raw_data within a concurrent.futures.ProcessPoolExecutor
-    """
-    return process_raw_data(
-        args[0], args[1], args[2], args[3], args[4], args[5], args[6]
-    )  # there are probably better ways to do this, but it works, and I am a physicist not a computer scientist :)
-
-
-def convert_directory(
-    directory: Union[str, Path],
-    cluster: bool = True,
-    sid: Union[str, int, None] = None,
-    save_dir: Union[str, Path, None] = None,
-    save_raw: bool = False,
-    save_cent: bool = False,
-    prints: bool = False,
-):
-    """
-    A function that converts an entire directory of .tpx3 files by calling process_raw_data in a parallel processing pool. If you only want to convert files with a certain sid in the filename, you can pass that in, otherwise will do all files.
-
-    Parameters
-    ----------
-    directory : Union[str, Path]
-        Path to the directory to grab .tpx3 files from to convert
-    cluster : bool = True
-        Whether to perform clustering/centroiding on the raw data.
-    sid : Union[str, None] = None
-        The sid, which is in the raw file path, to be converted. If None, will convert all files in the directory.
-    save_dir : Union[str, Path, None] = None
-        The directory to save output .h5 files.
-    save_raw : bool = False
-        Whether or not to save the raw data to .h5.
-    save_cent : bool = False
-        Whether or not to save the centroided data to .h5.
-    prints : bool = False
-        Whether or not to print out status updates during execution.
-
-    """
-    if sid == None:
-        if prints:
-            print("-> Converting {}".format(directory))
-        files = [os.path.join(directory, file) for file in os.listdir(directory) if file.endswith(".tpx3")]
-    else:
-        if prints:
-            print("-> Converting {} with filename containing {}".format(directory, sid))
-        files = [
-            os.path.join(directory, file)
-            for file in os.listdir(directory)
-            if (file.endswith(".tpx3") and (str(sid) in file))
-        ]
-
-    args = [
-        [fpath, cluster, os.path.splitext(os.path.split(fpath)[1])[0], save_dir, save_raw, save_cent, prints]
-        for fpath in files
-    ]  # this probably highlights that I am not an advanced Python programmer :)
-
-    max_workers = (
-        16  # I am 100% sure DSSI will have better ways to manage resources to do this. Please feel free to adjust.
-    )
-
-    try:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-            executor.map(_process_raw_data, args)
-    except Exception as e:
-        print(e)
-
-    print("Done!")
-
-
-def concat_data_seq(
-    directory: Union[str, Path],
-    sid: Union[str, None] = None,
-    datatype: str = "centroid",
-    save: bool = False,
-    prints: bool = False,
-):
-    """
-    A function that concatenates several subscans in different .h5 files together into one big "master" scan.
-
-    Parameters
-    ----------
-    directory : Union[str, Path]
-        Path to the directory to grab .tpx3 files from to convert
-    sid : Union[str, Path]
-        The sid, which is in the .h5 file path, to be converted. If None, will concatenate tall files in the directory.
-    datatype : str = 'centroid'
-        Whether to concatenate the raw or centroided data.
-    save : bool = False
-        Whether to save the concatenated to new .h5 file or not.
-    prints : bool = False
-        Whether or not to print out status updates during execution.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing the concatenated data.
-    """
-    if prints:
-        print("-> Concatenating {} with filename containing {}: {}".format(directory, sid, time.ctime()))
-    files = [
-        os.path.join(directory, file)
-        for file in os.listdir(directory)
-        if (file.endswith(".h5") and (str(sid) in file) and str(datatype) in file and not "all" in file)
-    ]
-
-    if datatype == "centroid":
-        dflag = "c_df"
-    elif datatype == "raw":
-        dflag = "rs_df"
-
-    start_t = 0
-    dfs = []
-    for ind, fpath in enumerate(tqdm(files)):
-        file_size = os.path.getsize(fpath)
-        if file_size > 0:
-            with pd.HDFStore(fpath, mode="r") as store:
-                new_df = store.get(dflag)
-            new_df["t"] = new_df["t"] + start_t
-            start_t = new_df["t"].iloc[-1]
-            dfs.append(new_df)
-
-    if prints:
-        print("-> Concatenating dataframe list: {}".format(time.ctime()))
-
-    dfs = pd.concat(dfs).reset_index(drop=True)
-
-    if prints:
-        print("-> Concatenating complete: {}".format(time.ctime()))
-
-    if save:
-        save_fname = "{}_all_{}.h5".format(sid, datatype)
-        save_path = directory + save_fname
-        if prints:
-            print('-> Saving all {} {} to "{}": {}'.format(sid, datatype, save_fname, time.ctime()))
-        with pd.HDFStore(save_path, mode="w") as store:
-            store.put(dflag, dfs)
-
-        if prints:
-            print("-> Saving complete.")
-
-    return dfs
-
-
-def add_centroid_cols(df: pd.DataFrame) -> pd.DataFrame:
+def add_centroid_cols(
+    df: pd.DataFrame, gap: bool = True
+) -> pd.DataFrame:
     """
     Calculates centroid positions to the nearest pixel and the timestamp in nanoseconds.
 
@@ -792,14 +578,313 @@ def add_centroid_cols(df: pd.DataFrame) -> pd.DataFrame:
     ----------
     df : pd.DataFrame
         Input centroided dataframe
+    gap : bool = True
+        Determines whether to implement large gap correction by adding 2 empty pixels offsets
 
     Returns
     -------
     pd.DataFrame
         Originally dataframe with new columns x, y, and t_ns added.
     """
+    if gap:
+        df.loc[df['xc'] >= 255.5, 'xc'] += 2
+        df.loc[df['yc'] >= 255.5, 'yc'] += 2
     df["x"] = np.round(df["xc"]).astype(np.uint16)
     df["y"] = np.round(df["yc"]).astype(np.uint16)
     df["t_ns"] = df["t"] / 4096 * 25
 
     return df
+
+
+"""
+A bunch of functions to help process multiple related .tpx3 files into Pandas dataframes stored in .h5 files.
+""" 
+RAW_H5_SUFFIX = ""
+CENT_H5_SUFFIX = "_cent"
+CONCAT_H5_SUFFIX = "_cent"
+
+
+def extract_fpaths_from_sid(
+    sid: int
+) -> List[str]:
+    """
+    Extract file paths from a given sid.
+    
+    Parameters 
+    ----------
+    sid : int
+        Short ID of a BlueSky scan
+        
+    Returns
+    -------
+    List[str]
+        Filepaths of the written .tpx3, as recorded in Tiled    
+    """
+    return list(db[sid].table()["tpx3_files_raw_filepaths"].to_numpy()[0])
+
+
+def extract_uid_from_fpaths(
+    fpaths: List[str]
+) -> str:
+    """
+    Extract scan unique ID from file paths.
+    
+    Parameters
+    ----------
+    fpaths : List[str]
+        List of the filepaths.
+        
+    Returns
+    -------
+    str
+        String of the first file's unique ID.
+    
+    """
+    return os.path.basename(fpaths[0])[:23]
+
+
+def extract_dir_from_fpaths(
+    fpaths: List[str]
+) -> str:
+    """
+    Extract directory from file paths.
+    
+    Parameters
+    ----------
+    fpaths : List[str]
+        List of the filepaths.
+        
+    Returns
+    -------
+    str 
+        String of the first file's directory.     
+    
+    """
+    return os.path.dirname(fpaths[0])
+
+
+def extract_uid_from_sid(
+    sid: int
+) -> str:
+    """
+    Extract user ID from a given sid.
+    
+    Parameters
+    ----------
+    sid : int
+    
+    Returns
+    -------
+    str
+        String of the short ID's corresponding unique ID.
+        
+    """
+    return extract_uid_from_fpaths(extract_fpaths_from_sid(sid))
+
+
+def convert_file(
+    fpath: Union[str, Path], time_window_microsecond: float = DEFAULT_CLUSTER_TW_MICROSECONDS, radius: int = DEFAULT_CLUSTER_RADIUS, print_details: bool = False
+):
+    """
+    Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
+    
+    Parameters
+    ----------
+    fpath : Union[str, Path]
+        .tpx3 file path
+    time_window_microsecond : float = DEFAULT_CLUSTER_TW_MICROSECONDS
+        The time window, in microseconds, to perform centroiding
+    radius : int = DEFAULT_CLUSTER_RADIUS
+        The radius, in pixels, to perform centroiding
+    print_details : bool = False
+        Boolean toggle about whether to print detailed data.
+    """
+    fname, ext = os.path.splitext(fpath)
+    dfname = "{}{}.h5".format(fname, RAW_H5_SUFFIX)
+    dfcname = "{}{}.h5".format(fname, CONCAT_H5_SUFFIX)
+    
+    if ext == ".tpx3" and os.path.exists(fpath):
+        file_size = os.path.getsize(fpath)
+        have_df = os.path.exists(dfname)
+        have_dfc = os.path.exists(dfcname)
+
+        if have_df and have_dfc:
+            print("-> {} exists, skipping.".format(dfname))
+        else:
+            print("-> Processing {}, size: {:.1f} MB".format(fpath, file_size/1000000))
+            time_window = time_window_microsecond * 1e-6
+            time_stamp_conversion = 6.1e-12
+            timedif = int(time_window / time_stamp_conversion)
+            
+            if print_details:
+                print("Loading {} data into dataframe...".format(fpath))
+            df = raw_to_sorted_df(fpath)
+            num_events = df.shape[0]
+            
+            if print_details:
+                print("Loading {} complete. {} events found. Saving to: {}".format(fpath, num_events, dfname))
+            df.to_hdf(dfname, key='df', mode='w')
+            
+            if print_details:
+                print("Saving {} complete. Beginning clustering...".format(dfname))
+            df_c = raw_df_to_cluster_df(df, timedif, radius)
+            num_clusters = df_c.shape[0]
+            
+            if print_details:
+                print("Clustering {} complete. {} clusters found. Saving to {}".format(fpath, num_clusters, dfcname))
+            df_c.to_hdf(dfcname, key='df', mode='w')
+            print("Saving {} complete. Moving onto next file.".format(dfcname))
+    else:
+        print("File not found. Moving onto next file.")
+        
+            
+def convert_tpx3_parallel(
+    fpaths: Union[str, Path], num_workers: int = None
+):
+    """
+    Convert a list of .tpx3 files in a parallel processing pool.
+    
+    Parameters
+    ----------
+    fpaths : Union[str, Path]
+        .tpx3 file paths to convert in a parallel processing pool.
+    num_workers : int = None
+        Number of parallel workers to employ.
+    """
+    if num_workers == None:
+        num_cores = multiprocessing.cpu_count()
+        max_workers = num_cores-1
+    else:
+        max_workers = num_workers
+    
+    with multiprocessing.Pool(processes=max_workers) as pool:
+        pool.map(convert_file, fpaths)
+    
+    print("Parallel conversion complete")
+    
+
+def convert_tpx3_st(fpaths: Union[str, Path]):
+    """
+    Convert a list of .tpx3 files in a single thread.
+    
+    Parameters
+    ----------
+    fpaths : Union[str, Path]
+        .tpx3 file paths to convert in a single thread.
+    """
+    for file in fpaths:
+        convert_file(file)
+        
+
+def get_cent_files(
+    uid: str, dir_name: Union[str, Path]
+) -> List[str]:
+    """
+    Gets a list of the centroided .h5 files from a given uid, sorted by sequence number.
+    
+    Parameters
+    ----------
+    uid : str
+        The unique ID of the scan of which we want to get the files.
+        
+    dir_name : Union[str, path]
+        Directory to look in for the files.
+        
+    Returns
+    -------
+    List[str]
+        List of the centroided file paths.
+    """
+    cent_files = [
+        os.path.join(dir_name, file)
+        for file in os.listdir(dir_name)
+        if file.endswith("{}.h5".format(CENT_H5_SUFFIX)) and str(uid) in file and len(os.path.basename(file)) == 44
+    ]
+
+    cent_files.sort(key=lambda f: int(os.path.splitext(os.path.basename(f))[0].split("_")[-2]))
+    return cent_files
+
+
+def concat_cent_files(
+    cfpaths: List[Union[str, Path]]
+):
+    """
+    Concatenates several centroided files together.
+    
+    Parameters
+    ----------
+    cfpaths : List[str, Path]
+        List of the centroided .h5 files to concatenate together.
+    """
+    dir_name = os.path.dirname(cfpaths[0])
+    uid = extract_uid_from_fpaths(cfpaths)
+    
+    dfs = [pd.read_hdf(fpath, key='df') for fpath in tqdm(cfpaths)]
+    combined_df = pd.concat(dfs).reset_index(drop=True)
+    
+    save_path = os.path.join(dir_name, "{}{}.h5".format(uid, CONCAT_H5_SUFFIX))
+    combined_df.to_hdf(save_path, key='df', mode='w')
+    
+    print("-> Saving complete.")
+    
+
+def get_con_cent_file(
+    sid: int
+) -> str:
+    """
+    Gets the location of the concatenated centroid files of a given sid.
+    
+    Parameters
+    ----------
+    sid : int
+        Short ID of whichto get the centroided file path
+        
+    Returns
+    -------
+    str
+        Path of the centroided file.
+    """
+    fpaths = extract_fpaths_from_sid(sid)
+    uid = extract_uid_from_fpaths(fpaths)
+    dir_name = extract_dir_from_fpaths(fpaths)
+    cfpath = os.path.join(dir_name, "{}{}.h5".format(uid, CONCAT_H5_SUFFIX))
+    
+    if os.path.exists(cfpath):
+        return cfpath
+    else:
+        print("-> Warning: {} does not exist".format(cfpath))
+        return None
+
+    
+def convert_sids(
+    sids: List[int]
+):
+    """
+    Convert given sids by converting each .tpx3 file and then concatenating results together into a master dataframe.
+    
+    Parameters
+    ----------
+    sids : List[int]
+        List of BlueSky scans' short IDs to convert.
+    """
+    
+    for sid in sids:
+        print("\n\n---> Beginning sid: {} <---\n".format(sid))
+        
+        tpx3fpaths = extract_fpaths_from_sid(sid)
+        dir_name = extract_dir_from_fpaths(tpx3fpaths)
+        num_tpx = len(tpx3fpaths)
+        uid = extract_uid_from_fpaths(tpx3fpaths)
+
+        convert_tpx3_parallel(tpx3fpaths, num_workers=16)
+        centfpaths = get_cent_files(uid, dir_name)
+        num_cent = len(centfpaths)
+
+        if num_tpx == num_cent:
+            print("---> Conversion numbers match")
+            concat_cent_files(centfpaths)
+        else:
+            print("---> Warning: conversion mismatch: tpx3={}, cent={}".format(num_tpx, num_cent))
+
+        print("---> Done with {}!".format(sid))
+        gc.collect() 
