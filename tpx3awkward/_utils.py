@@ -546,7 +546,7 @@ def cent_to_df(
 
 
 def raw_df_to_cluster_df(
-    raw_df: pd.DataFrame
+    raw_df: pd.DataFrame, tw: int = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS
 ) -> pd.DataFrame:
     """
     Uses functions defined herein to take Dataframe of raw data and return dataframe of clustered data.
@@ -555,6 +555,10 @@ def raw_df_to_cluster_df(
     ----------
     raw_df : pd.DataFrame
         Pandas DataFrame of the raw data
+    tw : int
+        The time window to be considered "coincident" for clustering purposes
+    radius : int
+        The search radius, using Euclidean distance of x, y, timestamp/tw
 
     Returns
     -------
@@ -562,7 +566,7 @@ def raw_df_to_cluster_df(
         Pandas DataFrame of the centroided data.
     """
     filt_cond_raw_df = drop_zero_tot(condense_raw_df(raw_df))
-    events, clusters = neighbor_set_from_df(filt_cond_raw_df)
+    events, clusters = neighbor_set_from_df(filt_cond_raw_df, tw, radius)
     num_clusters, max_cluster = cluster_stats(clusters)
     cluster_arr = create_cluster_arr(clusters, num_clusters, max_cluster)
     return cent_to_df(cent_to_numpy(cluster_arr, events, num_clusters, max_cluster))
