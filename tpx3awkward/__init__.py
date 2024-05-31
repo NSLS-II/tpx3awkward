@@ -1,5 +1,6 @@
 from pathlib import Path
 from . import _version
+from ._utils import ingest_from_files
 
 
 def _get_version():

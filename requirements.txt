@@ -1,12 +1,6 @@
 # List required packages in this file, one per line.
 numpy
 numba
-os
 pandas
-scipy.spatial
-concurrent.futures
-multiprocessing
-time
-tdqm
-gc
-pyCHX
+scipy
+# pyCHX
