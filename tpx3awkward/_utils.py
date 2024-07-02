@@ -133,21 +133,35 @@ def get_spidr(msg):
 
 
 @numba.jit(nopython=True)
-def decode_message(msg, chip, spidr_epoch=0, spidr_cutoff=0):
+def decode_message(msg, chip, last_ts: np.uint64 = 0):
     """Decode TPX3 packages of the second type corresponding to photon events (id'd via 0xB upper nibble)
 
     Parameters
     ----------
-        msg (uint64): tpx3 binary package
+        msg (uint64): tpx3 binary message
         chip (uint8): chip ID, 0..3
-        spidr_epoch: SPIDR epoch at the start of the file; the counter increments every time the SPIDR clock resets
-        spidr_cutoff: if a file spans two SPIDR epochs, this parameter defines a midpoint between the lowest SPIDR
-            id in the previous epoch and the highest SPIDR id in the following epoch; i.e. all packages with
-            SPIDR > spidr_cutoff are guaranteed to belong to the next epoch, and vice versa.
+        last_ts (uint64): last timestamp from the previous message; defines the SPIDR rollover
+
+        # bit position   : ...  44   40   36   32   28   24   20   16   12    8 7  4 3  0
+        # 0xFFFFC0000000 :    1111 1111 1111 1111 1100 0000 0000 0000 0000 0000 0000 0000
+        # 0x3FFFFFFF     :    0000 0000 0000 0000 0011 1111 1111 1111 1111 1111 1111 1111
+        # SPIDR          :                                       ssss ssss ssss ssss ssss
+        # ToA            :                                                   tt tttt tttt
+        # ToA_coarse     :                          ss ssss ssss ssss ssss sstt tttt tttt
+        # pixel_bits     :                          ^^
+        # FToA           :                                                           ffff
+        # count          :                     ss ssss ssss ssss ssss sstt tttt tttt ffff   (FToA is subtracted)
+        # phase          :                                                           pppp
+        # 0x10000000     :                           1 0000 0000 0000 0000 0000 0000 0000
+        # heartbeat_time :    hhhh hhhh hhhh hhhh hhhh hhhh hhhh hhhh hhhh hhhh hhhh hhhh
+        # heartbeat_bits :                          ^^
+        # global_time    :    hhhh hhhh hhhh hhss ssss ssss ssss ssss sstt tttt tttt ffff
+
+        # count = (ToA_coarse << np.uint(4)) - FToA     # Counter value, in multiples of 1.5625 ns
 
     Returns
     ----------
-        Arrays of pixel coordinates and timestamps.
+        Arrays of pixel coordinates, ToT, and timestamps.
     """
     x, y = decode_xy(msg, chip)  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
     # ToA is 14 bits
@@ -158,76 +172,34 @@ def decode_message(msg, chip, spidr_epoch=0, spidr_cutoff=0):
     FToA = (msg >> np.uint(16)) & np.uint(0xF)
     # SPIDR time is 16 bits
     SPIDR = np.uint64(get_spidr(msg))
-    # Apply the spidr_epoch rollover
-    SPIDR += np.uint64((spidr_epoch + (SPIDR < spidr_cutoff)) * (2**16))
-    # Counter value, in multiples of 1.5625 ns
-    count = (((SPIDR << np.uint(14)) + ToA) << np.uint(4)) - FToA
+
+    ToA_coarse = (SPIDR << np.uint(14)) | ToA
+    # pixel_bits are the two highest bits of the SPIDR (i.e. the pixelbits range covers 262143 spidr cycles)
+    pixel_bits = int((ToA_coarse >> np.uint(28)) & np.uint(0x3))
+    # heart_bits are the bits at the same positions in the heartbeat_time
+    heartbeat_time = np.uint64(last_ts)
+    heart_bits = int((heartbeat_time >> np.uint(28)) & np.uint(0x3))
+    # Adjust heartbeat_time based on the difference between heart_bits and pixel_bits
+    diff = heart_bits - pixel_bits
+    # diff +/-1 occur when pixelbits step up
+    # diff +/-3 occur when spidr counter overfills
+    # diff can also be 0 -- then nothing happens -- but never +/-2
+    if diff == 1 or diff == -3:
+        heartbeat_time -= np.uint(0x10000000)
+    elif diff == -1 or diff == 3:
+        heartbeat_time += np.uint(0x10000000)
+    # Construct globaltime
+    global_time = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
     # Phase correction
     phase = np.uint((x / 2) % 16) or np.uint(16)
-    # Calculate the timestamp
-    ts = np.uint64(count + phase)
+    # Construct timestamp with phase correction
+    ts = (global_time << np.uint(4)) - FToA + phase
 
     return x, y, ToT, ts
 
 
 @numba.jit(nopython=True)
-def check_spidr_overflow(data, last_spidr=0):
-    """Detect if the SPIDR counter has overflowed in the current data chunk (file)
-
-    Assumes that only single SPIDR overflow can occur within one file, i.e. the duration of the file is <27 sec.
-
-    Arguments:
-    ----------
-    data : NDArray[np.unint64]
-        The stream of raw data from the timepix3 detector
-    last_spidr : int
-        The last SPIDR value at the tail of the previous tpx3 file
-
-    Returns:
-    -------
-    spidr_midpoint : int
-        A value of the spidr counter such that any datapoints in the file with SPIDR < midpoint should be assigned
-        to the next SPIDR epoch (kept track of and incremented outside the function), and vice versa.
-        If spidr_midpoint=0, all data points in the file belong to the previous SPIDR epoch.
-    last_spidr : int
-        The highest SPIDR counter value from the new epoch observed at the end of file.
-    """
-
-    head_min, head_max = 65535, 0
-    tail_min, tail_max = 65535, 0
-    for i in range(64):
-        if not is_packet_header(data[i]) and matches_nibble(data[i], 0xB):
-            head_min = min(get_spidr(data[i]), head_min)
-            head_max = max(get_spidr(data[i]), head_max)
-        if not is_packet_header(data[-i - 1]) and matches_nibble(data[-i - 1], 0xB):
-            tail_min = min(get_spidr(data[-i - 1]), tail_min)
-            tail_max = max(get_spidr(data[-i - 1]), tail_max)
-    if head_min > tail_max:
-        # Transition somewhere in the middle of the file
-        midpoint = (np.uint32(head_min) + np.uint32(tail_max)) // 2
-    elif (head_max - head_min) > 32768:
-        # Large drop in the head of the file
-        midpoint = (65535 + np.uint32(tail_max)) // 2  # Assume the smallest SPIDR from the last epoch at the head is 65535
-    elif (tail_max - tail_min) > 32768:
-        # Large drop in the tail of the file; find tail_max from the new epoch
-        tail_max = 0
-        for i in range(64):
-            if not is_packet_header(data[-i - 1]) and matches_nibble(data[-i - 1], 0xB):
-                tail_spidr = get_spidr(data[-i - 1])
-                if tail_spidr < 32768:
-                    tail_max = max(tail_spidr, tail_max)
-        midpoint = (np.uint32(head_min) + np.uint32(tail_max)) // 2
-    elif last_spidr > head_min:
-        # Transition occured between the files
-        midpoint = 65535  # Everything in this file is in the new SPIDR epoch
-    else:
-        midpoint = 0
-
-    return np.uint16(midpoint), np.uint16(tail_max)
-
-
-@numba.jit(nopython=True)
-def _ingest_raw_data_rollover(data: IA, spidr_epoch=0, last_spidr=0):
+def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
 
     chips = np.zeros_like(data, dtype=np.uint8)
     x = np.zeros_like(data, dtype="u2")
@@ -235,19 +207,17 @@ def _ingest_raw_data_rollover(data: IA, spidr_epoch=0, last_spidr=0):
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
 
-    chip_indx = 0
-    spidr_cutoff, last_spidr = check_spidr_overflow(data, last_spidr=last_spidr)
-    i = 0
+    i, chip_indx = 0, 0
     for msg in data:
         if is_packet_header(msg):
             chip_indx = np.uint8(get_block(msg, 8, 32))
         elif matches_nibble(msg, 0xB):
             chips[i] = chip_indx
-            _x, _y, _tot, _ts = decode_message(msg, chip_indx, spidr_epoch=spidr_epoch, spidr_cutoff=spidr_cutoff)
+            _x, _y, _tot, _ts = decode_message(msg, chip_indx, last_ts = last_ts)
             x[i] = _x
             y[i] = _y
             tot[i] = _tot
-            ts[i] = _ts
+            ts[i] = last_ts = _ts
             i += 1
 
     # Sort the timestamps
@@ -255,158 +225,7 @@ def _ingest_raw_data_rollover(data: IA, spidr_epoch=0, last_spidr=0):
     chips = chips[indx]
     x, y, tot, ts = x[indx], y[indx], tot[indx], ts[indx]
 
-    if spidr_cutoff > 0:
-        spidr_epoch += 1
-
-    return x, y, tot, ts, chips, spidr_epoch, last_spidr
-
-
-@numba.jit(nopython=True)
-def _ingest_raw_data(data: IA):
-    types = np.zeros_like(data, dtype="<u1")
-    is_header = is_packet_header(data)
-    types[is_header] = 1
-    # get the highest nibble
-    nibble = data >> np.uint(60)
-    # probably a better way to do this, but brute force!
-    types[~is_header & (nibble == 0xB)] = 2
-    types[~is_header & (nibble == 0x6)] = 3
-    types[~is_header & (nibble == 0x4)] = 4
-    types[~is_header & (nibble == 0x7)] = 5
-
-    # sort out how many photons we have
-    total_photons = np.sum(types == 2)
-
-    # allocate the return arrays
-    x = np.zeros(total_photons, dtype="u2")
-    y = np.zeros(total_photons, dtype="u2")
-    pix_addr = np.zeros(total_photons, dtype="u2")
-    ToA = np.zeros(total_photons, dtype="u2")
-    ToT = np.zeros(total_photons, dtype="u4")
-    FToA = np.zeros(total_photons, dtype="u2")
-    SPIDR = np.zeros(total_photons, dtype="u2")
-    chip_number = np.zeros(total_photons, dtype="u1")
-    basetime = np.zeros(total_photons, dtype="u8")
-    timestamp = np.zeros(total_photons, dtype="u8")
-
-    photon_offset = 0
-    chip = np.uint16(0)
-    expected_msg_count = np.uint16(0)
-    msg_run_count = np.uint(0)
-
-    heartbeat_lsb = np.uint64(0)
-    heartbeat_msb = np.uint64(0)
-    heartbeat_time = np.uint64(0)
-    # loop over the packet headers (can not vectorize this with numpy)
-    for j in range(len(data)):
-        msg = data[j]
-        typ = types[j]
-        if typ == 1:
-            # 1: packet header (id'd via TPX3 magic number)
-            if expected_msg_count != msg_run_count:
-                print("missing messages!", msg)
-            # extract scalar information from the header
-
-            # "number of pixels in chunk" is given in bytes not words
-            # and means all words in the chunk, not just "photons"
-            expected_msg_count = get_block(msg, 16, 48) // 8
-            # what chip we are on
-            chip = np.uint8(get_block(msg, 8, 32))
-            msg_run_count = 0
-        elif typ == 2 or typ == 6:
-            #  2: photon event (id'd via 0xB upper nibble)
-            #  6: frame driven data (id'd via 0xA upper nibble) (??)
-
-            # |
-
-            # pixAddr is 16 bits
-            # these names and math are adapted from c++ code
-            l_pix_addr = pix_addr[photon_offset] = (msg >> np.uint(44)) & np.uint(0xFFFF)
-            # This is laid out 16ibts which are 2 interleaved 8 bit unsigned ints
-            #  CCCCCCCRRRRRRCRR
-            #  |dcol ||spix|^||
-            #  | 7   || 6  |1|2
-            #
-            # The high 7 bits of the column
-            # '1111111000000000'
-            dcol = (l_pix_addr & np.uint(0xFE00)) >> np.uint(8)
-            # The high 6 bits of the row
-            # '0000000111111000'
-            spix = (l_pix_addr & np.uint(0x01F8)) >> np.uint(1)
-            rowcol = _shift_xy(
-                chip,
-                # add the low 2 bits of the row
-                # '0000000000000011'
-                spix + (l_pix_addr & np.uint(0x3)),
-                # add the low 1 bit of the column
-                # '0000000000000100'
-                dcol + ((l_pix_addr & np.uint(0x4)) >> np.uint(2)),
-            )
-            col = x[photon_offset] = rowcol[1]
-            y[photon_offset] = rowcol[0]
-            # ToA is 14 bits
-            ToA[photon_offset] = (msg >> np.uint(30)) & np.uint(0x3FFF)
-            # ToT is 10 bits
-            # report in ns
-            ToT[photon_offset] = ((msg >> np.uint(20)) & np.uint(0x3FF)) * 25
-            # FToA is 4 bits
-            l_FToA = FToA[photon_offset] = (msg >> np.uint(16)) & np.uint(0xF)
-            # SPIDR time is 16 bits
-            SPIDR[photon_offset] = msg & np.uint(0xFFFF)
-            # chip number (this is a constant)
-            chip_number[photon_offset] = chip
-            # heartbeat time
-            basetime[photon_offset] = heartbeat_time
-
-            ToA_coarse = (SPIDR[photon_offset] << np.uint(14)) | ToA[photon_offset]
-            pixelbits = int((ToA_coarse >> np.uint(28)) & np.uint(0x3))
-            heartbeat_time_bits = int((heartbeat_time >> np.uint(28)) & np.uint(0x3))
-            diff = heartbeat_time_bits - pixelbits
-            if diff == 1 or diff == -3:
-                heartbeat_time -= np.uint(0x10000000)
-            elif diff == -1 or diff == 3:
-                heartbeat_time += np.uint(0x10000000)
-            globaltime = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
-
-            timestamp[photon_offset] = (globaltime << np.uint(12)) - (l_FToA << np.uint(8))
-            # correct for phase shift
-            phase = np.uint((col / 2) % 16)
-            if phase == 0:
-                timestamp[photon_offset] += 16 << 8
-            else:
-                timestamp[photon_offset] += phase << 8
-
-            photon_offset += 1
-            msg_run_count += 1
-        elif typ == 3:
-            #  3: TDC timstamp (id'd via 0x6 upper nibble)
-            # TODO: handle these!
-            msg_run_count += 1
-        elif typ == 4:
-            #  4: global timestap (id'd via 0x4 upper nibble)
-            subheader = (msg >> np.uint(56)) & np.uint(0x0F)
-            if subheader == 0x4:
-                # timer lsb, 32 bits of time
-                heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
-            elif subheader == 0x5:
-                # timer msb
-
-                time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
-                heartbeat_msb = time_msg << np.uint(32)
-                # TODO the c++ code has large jump detection, do not understand why
-                heartbeat_time = heartbeat_msb | heartbeat_lsb
-            else:
-                raise Exception("unknown header")
-
-            msg_run_count += 1
-        elif typ == 5:
-            #  5: "command" data (id'd via 0x7 upper nibble)
-            # TODO handle this!
-            msg_run_count += 1
-        else:
-            raise Exception("Not supported")
-
-    return x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number, basetime, timestamp
+    return x, y, tot, ts, chips
 
 
 def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDArray]]:
@@ -421,11 +240,11 @@ def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDAr
     An iterable over the parsing results, each encapsulated in a dictionary
     """
 
-    spidr_epoch, last_spidr = 0, 0
+    last_ts = 0
     for fpath in fpaths:
         data = raw_as_numpy(fpath)
-        x, y, tot, ts, chips, spidr_epoch, last_spidr = _ingest_raw_data_rollover(data, spidr_epoch, last_spidr=last_spidr)
-
+        x, y, tot, ts, chips = _ingest_raw_data(data, last_ts = last_ts)
+        last_ts = ts[-1]
         yield {
             k.strip(): v
             for k, v in zip(
@@ -435,7 +254,7 @@ def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDAr
         }
 
 
-def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
+def ingest_raw_data(data: IA, last_ts: np.uint64 = 0) -> Dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
 
@@ -447,14 +266,11 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     Returns
     -------
     Dict[str, NDArray]
-       Keys of x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number
+       Keys of x, y, ToT, chip_number
     """
     return {
         k.strip(): v
-        for k, v in zip(
-            "x, y, pix_addr, ToA, ToT, FToA, SPIDR, chip_number, basetime, timestamp".split(","),
-            _ingest_raw_data(data),
-        )
+        for k, v in zip("x, y, ToT, ts, chip_number".split(","), _ingest_raw_data(data, last_ts=last_ts))
     }
 
 # ^-- tom wrote
