@@ -101,7 +101,8 @@ def decode_xy(msg, chip):
 
 @numba.jit(nopython=True)
 def decode_message_old(msg, chip, heartbeat_time):
-    """Decode TPX3 packages of the second type corresponding to photon events (id'd via 0xB upper nibble)
+    """Decode TPX3 packages of the second type corresponding to photon events (id'd via 0xB upper nibble). "old" version to be used
+    when processing data that does not have global timestamps (i.e. GlobalTimestampInterval set to 0 in Timepix config)
 
     Parameters
     ----------
@@ -397,7 +398,8 @@ def _ingest_raw_data(data: IA):
 
 
 def ingest_from_files_old(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDArray]]:
-    """Parse values out of a sequence of timepix3 files with rollover of SPIDR counter.
+    """Parse values out of a sequence of timepix3 files with rollover of SPIDR counter. "old" version to be used
+    when processing data that does not have global timestamps (i.e. GlobalTimestampInterval set to 0 in Timepix config)
 
     Parameters
     ----------
