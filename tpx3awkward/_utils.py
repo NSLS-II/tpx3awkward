@@ -445,7 +445,7 @@ def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDAr
         }
 
 
-def ingest_raw_data(data: IA, last_ts: np.uint64 = 0) -> Dict[str, NDArray]:
+def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
 
@@ -461,7 +461,7 @@ def ingest_raw_data(data: IA, last_ts: np.uint64 = 0) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, ToT, ts, chip_number".split(","), _ingest_raw_data(data, last_ts=last_ts))
+        for k, v in zip("x, y, ToT, ts, chip_number".split(","), _ingest_raw_data(data))
     }
 
 # ^-- tom wrote
