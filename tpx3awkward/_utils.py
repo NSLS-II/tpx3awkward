@@ -199,7 +199,7 @@ def decode_message(msg, chip, last_ts: np.uint64 = 0):
 
 
 @numba.jit(nopython=True)
-def decode_heartbeat(msg, heartbeat_lsb=np.uint64(0)):
+def decode_heartbeat(msg: np.uint64, heartbeat_lsb: np.uint64 = np.uint64(0)):
     """Decode a heartbeat time message (idetified by its 0x4 upper nibble)
 
     Parameters
@@ -214,10 +214,12 @@ def decode_heartbeat(msg, heartbeat_lsb=np.uint64(0)):
     if subheader == 0x4:
         # timer lsb, 32 bits of time
         heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
+        heartbeat_time = None
     elif subheader == 0x5:
         # timer msb
         time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
         heartbeat_msb = time_msg << np.uint(32)
+        print(type(heartbeat_msb), type(heartbeat_lsb))
         # TODO the c++ code has large jump detection, do not understand why
         heartbeat_time = heartbeat_msb | heartbeat_lsb
     else:
@@ -234,8 +236,9 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
     y = np.zeros_like(data, dtype="u2")
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
+    heartbeat_lsb=np.uint64(0)
 
-    photon_count, chip_indx, msg_run_count = 0, 0, 0
+    photon_count, chip_indx, msg_run_count, expected_msg_count = 0, 0, 0, 0
     for msg in data:
         if is_packet_header(msg):
             # Type 1: packet header (id'd via TPX3 magic number)
@@ -267,7 +270,7 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
         
         elif matches_nibble(msg, 0x4):
             # Type 4: global timestap (id'd via 0x4 upper nibble)
-            heartbeat_lsb, heartbeat_time = decode_heartbeat(msg, heartbeat_lsb)
+            heartbeat_lsb, heartbeat_time = decode_heartbeat(msg, np.uint64(heartbeat_lsb))
             msg_run_count += 1
 
         elif matches_nibble(msg, 0x7):
