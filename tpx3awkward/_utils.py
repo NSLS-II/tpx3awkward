@@ -199,6 +199,34 @@ def decode_message(msg, chip, last_ts: np.uint64 = 0):
 
 
 @numba.jit(nopython=True)
+def decode_heartbeat(msg, heartbeat_lsb=np.uint64(0)):
+    """Decode a heartbeat time message (idetified by its 0x4 upper nibble)
+
+    Parameters
+    ----------
+        msg (uint64): tpx3 binary message with upper_nibble == 0x4
+
+    Returns
+    ----------
+        Integer value of the heartbeat time.
+    """
+    subheader = (msg >> np.uint(56)) & np.uint(0x0F)
+    if subheader == 0x4:
+        # timer lsb, 32 bits of time
+        heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
+    elif subheader == 0x5:
+        # timer msb
+        time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
+        heartbeat_msb = time_msg << np.uint(32)
+        # TODO the c++ code has large jump detection, do not understand why
+        heartbeat_time = heartbeat_msb | heartbeat_lsb
+    else:
+        raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
+    
+    return heartbeat_lsb, heartbeat_time
+
+
+@numba.jit(nopython=True)
 def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
 
     chips = np.zeros_like(data, dtype=np.uint8)
@@ -207,21 +235,52 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
 
-    i, chip_indx = 0, 0
+    photon_count, chip_indx, msg_run_count = 0, 0, 0
     for msg in data:
         if is_packet_header(msg):
+            # Type 1: packet header (id'd via TPX3 magic number)
+            if expected_msg_count != msg_run_count:
+                print("Missing messages!", msg)
+
+            # extract the chip number for the following photon events
             chip_indx = np.uint8(get_block(msg, 8, 32))
+
+            # "number of pixels in chunk" is given in bytes not words and means all words in the chunk, not just "photons"
+            expected_msg_count = get_block(msg, 16, 48) // 8
+            msg_run_count = 0
+
         elif matches_nibble(msg, 0xB):
-            chips[i] = chip_indx
+            # Type 2: photon event (id'd via 0xB upper nibble)
+            chips[photon_count] = chip_indx
             _x, _y, _tot, _ts = decode_message(msg, chip_indx, last_ts = last_ts)
-            x[i] = _x
-            y[i] = _y
-            tot[i] = _tot
-            ts[i] = last_ts = _ts
-            i += 1
+            x[photon_count] = _x
+            y[photon_count] = _y
+            tot[photon_count] = _tot
+            ts[photon_count] = last_ts = _ts
+            photon_count += 1
+            msg_run_count += 1
+
+        elif matches_nibble(msg, 0x6):
+            # Type 3: TDC timstamp (id'd via 0x6 upper nibble)
+            # TODO: handle these!
+            msg_run_count += 1
+        
+        elif matches_nibble(msg, 0x4):
+            # Type 4: global timestap (id'd via 0x4 upper nibble)
+            heartbeat_lsb, heartbeat_time = decode_heartbeat(msg, heartbeat_lsb)
+            msg_run_count += 1
+
+        elif matches_nibble(msg, 0x7):
+            # Type 5: "command" data (id'd via 0x7 upper nibble)
+            # TODO handle this!
+            msg_run_count += 1
+
+        else:
+            raise Exception(f"Not supported: {msg}")
+
 
     # Sort the timestamps
-    indx = np.argsort(ts[:i], kind="mergesort")
+    indx = np.argsort(ts[:photon_count], kind="mergesort")
     chips = chips[indx]
     x, y, tot, ts = x[indx], y[indx], tot[indx], ts[indx]
 
