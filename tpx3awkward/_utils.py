@@ -133,14 +133,14 @@ def get_spidr(msg):
 
 
 @numba.jit(nopython=True)
-def decode_message(msg, chip, last_ts: np.uint64 = 0):
+def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
     """Decode TPX3 packages of the second type corresponding to photon events (id'd via 0xB upper nibble)
 
     Parameters
     ----------
         msg (uint64): tpx3 binary message
         chip (uint8): chip ID, 0..3
-        last_ts (uint64): last timestamp from the previous message; defines the SPIDR rollover
+        heartbeat_time (uint64):
 
         # bit position   : ...  44   40   36   32   28   24   20   16   12    8 7  4 3  0
         # 0xFFFFC0000000 :    1111 1111 1111 1111 1100 0000 0000 0000 0000 0000 0000 0000
@@ -177,7 +177,6 @@ def decode_message(msg, chip, last_ts: np.uint64 = 0):
     # pixel_bits are the two highest bits of the SPIDR (i.e. the pixelbits range covers 262143 spidr cycles)
     pixel_bits = int((ToA_coarse >> np.uint(28)) & np.uint(0x3))
     # heart_bits are the bits at the same positions in the heartbeat_time
-    heartbeat_time = np.uint64(last_ts)
     heart_bits = int((heartbeat_time >> np.uint(28)) & np.uint(0x3))
     # Adjust heartbeat_time based on the difference between heart_bits and pixel_bits
     diff = heart_bits - pixel_bits
@@ -189,7 +188,7 @@ def decode_message(msg, chip, last_ts: np.uint64 = 0):
     elif diff == -1 or diff == 3:
         heartbeat_time += np.uint(0x10000000)
     # Construct globaltime
-    global_time = (heartbeat_time & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
+    global_time = (np.uint64(heartbeat_time) & np.uint(0xFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
     # Phase correction
     phase = np.uint((x / 2) % 16) or np.uint(16)
     # Construct timestamp with phase correction
@@ -198,45 +197,18 @@ def decode_message(msg, chip, last_ts: np.uint64 = 0):
     return x, y, ToT, ts
 
 
-@numba.jit(nopython=True)
-def decode_heartbeat(msg: np.uint64, heartbeat_lsb: np.uint64 = np.uint64(0)):
-    """Decode a heartbeat time message (idetified by its 0x4 upper nibble)
-
-    Parameters
-    ----------
-        msg (uint64): tpx3 binary message with upper_nibble == 0x4
-
-    Returns
-    ----------
-        Integer value of the heartbeat time.
-    """
-    subheader = (msg >> np.uint(56)) & np.uint(0x0F)
-    if subheader == 0x4:
-        # timer lsb, 32 bits of time
-        heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
-        heartbeat_time = None
-    elif subheader == 0x5:
-        # timer msb
-        time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
-        heartbeat_msb = time_msg << np.uint(32)
-        print(type(heartbeat_msb), type(heartbeat_lsb))
-        # TODO the c++ code has large jump detection, do not understand why
-        heartbeat_time = heartbeat_msb | heartbeat_lsb
-    else:
-        raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
-    
-    return heartbeat_lsb, heartbeat_time
-
-
-@numba.jit(nopython=True)
-def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
+# @numba.jit(nopython=True)
+def _ingest_raw_data(data):
 
     chips = np.zeros_like(data, dtype=np.uint8)
     x = np.zeros_like(data, dtype="u2")
     y = np.zeros_like(data, dtype="u2")
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
-    heartbeat_lsb=np.uint64(0)
+    heartbeat_lsb = np.uint64(0)
+    heartbeat_msb = np.uint64(0)
+    heartbeat_time = np.uint64(0)
+    hb = np.zeros_like(data, dtype="u8")
 
     photon_count, chip_indx, msg_run_count, expected_msg_count = 0, 0, 0, 0
     for msg in data:
@@ -255,11 +227,23 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
         elif matches_nibble(msg, 0xB):
             # Type 2: photon event (id'd via 0xB upper nibble)
             chips[photon_count] = chip_indx
-            _x, _y, _tot, _ts = decode_message(msg, chip_indx, last_ts = last_ts)
+            _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time)
             x[photon_count] = _x
             y[photon_count] = _y
             tot[photon_count] = _tot
-            ts[photon_count] = last_ts = _ts
+            ts[photon_count] = _ts
+            
+            if (photon_count > 0) and (_ts - ts[photon_count-1] > 2**30):
+                prev_ts = ts[:photon_count]   # This portion needs to be adjusted
+                # Find what the current timestamp would be without global heartbeat
+                _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
+                # Check if there is a SPIDR rollover in the beginning of the file but before heartbeat was received
+                if int(max(prev_ts[:10])) - int(min(prev_ts[-10:])) > 2**32:
+                    prev_ts[prev_ts < 2**33] += np.uint64(2**34)
+                    _ts_0 += 2**34
+                # Ajust the existing timestamps
+                ts[:photon_count] = prev_ts + (_ts - _ts_0)
+            
             photon_count += 1
             msg_run_count += 1
 
@@ -270,8 +254,22 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
         
         elif matches_nibble(msg, 0x4):
             # Type 4: global timestap (id'd via 0x4 upper nibble)
-            heartbeat_lsb, heartbeat_time = decode_heartbeat(msg, np.uint64(heartbeat_lsb))
+            subheader = (msg >> np.uint(56)) & np.uint(0x0F)
+            if subheader == 0x4:
+                # timer lsb, 32 bits of time
+                heartbeat_lsb = (msg >> np.uint(16)) & np.uint(0xFFFFFFFF)
+            elif subheader == 0x5:
+                # timer msb
+                time_msg = (msg >> np.uint(16)) & np.uint(0xFFFF)
+                heartbeat_msb = time_msg << np.uint(32)
+                heartbeat_time = (heartbeat_msb | heartbeat_lsb) # << np.uint(4)
+                # TODO the c++ code has large jump detection, do not understand why
+            else:
+                raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
+            pass
+
             msg_run_count += 1
+            hb[photon_count] = heartbeat_time
 
         elif matches_nibble(msg, 0x7):
             # Type 5: "command" data (id'd via 0x7 upper nibble)
@@ -286,8 +284,9 @@ def _ingest_raw_data(data: IA, last_ts: np.uint64 = 0):
     indx = np.argsort(ts[:photon_count], kind="mergesort")
     chips = chips[indx]
     x, y, tot, ts = x[indx], y[indx], tot[indx], ts[indx]
+    hb = hb[indx]
 
-    return x, y, tot, ts, chips
+    return x, y, tot, ts, chips, hb
 
 
 def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDArray]]:
@@ -302,21 +301,19 @@ def ingest_from_files(fpaths: List[Union[str, Path]]) -> Iterable[Dict[str, NDAr
     An iterable over the parsing results, each encapsulated in a dictionary
     """
 
-    last_ts = 0
     for fpath in fpaths:
         data = raw_as_numpy(fpath)
-        x, y, tot, ts, chips = _ingest_raw_data(data, last_ts = last_ts)
-        last_ts = ts[-1]
+        x, y, tot, ts, chips, hb = _ingest_raw_data(data)
         yield {
             k.strip(): v
             for k, v in zip(
-                "x, y, tot, timestamp, chips".split(","),
-                (x, y, tot, ts, chips),
+                "x, y, tot, timestamp, chips, hb".split(","),
+                (x, y, tot, ts, chips, hb),
             )
         }
 
 
-def ingest_raw_data(data: IA, last_ts: np.uint64 = 0) -> Dict[str, NDArray]:
+def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
 
@@ -332,7 +329,7 @@ def ingest_raw_data(data: IA, last_ts: np.uint64 = 0) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, ToT, ts, chip_number".split(","), _ingest_raw_data(data, last_ts=last_ts))
+        for k, v in zip("x, y, ToT, ts, chip_number, hb".split(","), _ingest_raw_data(data))
     }
 
 # ^-- tom wrote
