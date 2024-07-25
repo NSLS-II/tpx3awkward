@@ -205,8 +205,7 @@ def _ingest_raw_data(data):
     y = np.zeros_like(data, dtype="u2")
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
-    heartbeat_lsb = np.uint64(0)
-    heartbeat_msb = np.uint64(0)
+    heartbeat_lsb = None  #np.uint64(0)
     heartbeat_time = np.uint64(0)
 
     photon_count, chip_indx, msg_run_count, expected_msg_count = 0, 0, 0, 0
@@ -226,7 +225,6 @@ def _ingest_raw_data(data):
         elif matches_nibble(msg, 0xB):
             # Type 2: photon event (id'd via 0xB upper nibble)
             chips[photon_count] = chip_indx
-            # heartbeat_time = np.uint64(0)
             _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time)
             x[photon_count] = _x
             y[photon_count] = _y
@@ -240,9 +238,10 @@ def _ingest_raw_data(data):
                 # Check if there is a SPIDR rollover in the beginning of the file but before heartbeat was received
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
+                # Compare the difference with some big number (e.g. 1/4 of SPIDR)
                 if (head_max > tail_min) and (head_max - tail_min > 2**32):
                     prev_ts[prev_ts < 2**33] += np.uint64(2**34)
-                    _ts_0 += 2**34
+                    _ts_0 += np.uint64(2**34)
                 # Ajust already processed timestamps
                 ts[:photon_count] = prev_ts + (_ts - _ts_0)
             
@@ -258,14 +257,14 @@ def _ingest_raw_data(data):
             # Type 4: global timestap (id'd via 0x4 upper nibble)
             subheader = (msg >> np.uint(56)) & np.uint64(0x0F)
             if subheader == 0x4:
-                # timer lsb, 32 bits of time
+                # timer LSB, 32 bits of time
                 heartbeat_lsb = (msg >> np.uint(16)) & np.uint64(0xFFFFFFFF)
             elif subheader == 0x5:
-                # timer msb
-                time_msg = (msg >> np.uint(16)) & np.uint64(0xFFFF)
-                heartbeat_msb = time_msg << np.uint(32)
-                heartbeat_time = (heartbeat_msb | heartbeat_lsb) # << np.uint(4)
-                # TODO the c++ code has large jump detection, do not understand why
+                # timer MSB -- only matters if LSB has been received already
+                if heartbeat_lsb is not None:
+                    heartbeat_msb = ((msg >> np.uint(16)) & np.uint64(0xFFFF)) << np.uint(32)
+                    heartbeat_time = (heartbeat_msb | heartbeat_lsb)
+                    # TODO the c++ code has large jump detection, do not understand why
             else:
                 raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
             pass
