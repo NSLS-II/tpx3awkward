@@ -246,6 +246,8 @@ def _ingest_raw_data(data):
                     prev_ts[prev_ts < 2**33] += np.uint64(2**34)
                     _ts_0 += np.uint64(2**34)
                 ts[:photon_count] = prev_ts + (_ts - _ts_0)
+
+            # TODO: Do we want to adjust timestamps after SPIDR rollower even if no heartbeat was received at all?
             
             hb_init_flag = False
             photon_count += 1
