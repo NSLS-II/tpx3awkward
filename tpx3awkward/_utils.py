@@ -239,7 +239,7 @@ def _ingest_raw_data(data):
                 prev_ts = ts[:photon_count]   # This portion needs to be adjusted
                 # Find what the current timestamp would be without global heartbeat
                 _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
-                # Check if there is a SPIDR rollover in the beginning of the file but before the received
+                # Check if there is a SPIDR rollover in the beginning of the file before the heartbeat
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
                 if (head_max > tail_min) and (head_max - tail_min > 2**32):
