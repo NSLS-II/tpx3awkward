@@ -206,9 +206,12 @@ def _ingest_raw_data(data):
     tot = np.zeros_like(data, dtype="u4")
     ts = np.zeros_like(data, dtype="u8")
     heartbeat_lsb = None  #np.uint64(0)
+    heartbeat_msb = None  #np.uint64(0)
     heartbeat_time = np.uint64(0)
+    hb_init_flag = False    # Indicate when the heartbeat was set for the first time
 
     photon_count, chip_indx, msg_run_count, expected_msg_count = 0, 0, 0, 0
+
     for msg in data:
         if is_packet_header(msg):
             # Type 1: packet header (id'd via TPX3 magic number)
@@ -230,21 +233,21 @@ def _ingest_raw_data(data):
             y[photon_count] = _y
             tot[photon_count] = _tot
             ts[photon_count] = _ts
-            
-            if (photon_count > 0) and (_ts > ts[photon_count-1]) and (_ts - ts[photon_count-1] > 2**30):
+
+            # Adjust timestamps that were set before the first heartbeat was received
+            if hb_init_flag and (photon_count > 0):
                 prev_ts = ts[:photon_count]   # This portion needs to be adjusted
                 # Find what the current timestamp would be without global heartbeat
                 _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
-                # Check if there is a SPIDR rollover in the beginning of the file but before heartbeat was received
+                # Check if there is a SPIDR rollover in the beginning of the file but before the received
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
-                # Compare the difference with some big number (e.g. 1/4 of SPIDR)
                 if (head_max > tail_min) and (head_max - tail_min > 2**32):
                     prev_ts[prev_ts < 2**33] += np.uint64(2**34)
                     _ts_0 += np.uint64(2**34)
-                # Ajust already processed timestamps
                 ts[:photon_count] = prev_ts + (_ts - _ts_0)
             
+            hb_init_flag = False
             photon_count += 1
             msg_run_count += 1
 
@@ -257,11 +260,13 @@ def _ingest_raw_data(data):
             # Type 4: global timestap (id'd via 0x4 upper nibble)
             subheader = (msg >> np.uint(56)) & np.uint64(0x0F)
             if subheader == 0x4:
-                # timer LSB, 32 bits of time
+                # timer LSB, 32 bits of time -- needs to be received first, before MSB
                 heartbeat_lsb = (msg >> np.uint(16)) & np.uint64(0xFFFFFFFF)
             elif subheader == 0x5:
                 # timer MSB -- only matters if LSB has been received already
                 if heartbeat_lsb is not None:
+                    if heartbeat_msb is None:
+                        hb_init_flag = True
                     heartbeat_msb = ((msg >> np.uint(16)) & np.uint64(0xFFFF)) << np.uint(32)
                     heartbeat_time = (heartbeat_msb | heartbeat_lsb)
                     # TODO the c++ code has large jump detection, do not understand why
@@ -278,7 +283,6 @@ def _ingest_raw_data(data):
 
         else:
             raise Exception(f"Not supported: {msg}")
-
 
     # Sort the timestamps
     indx = np.argsort(ts[:photon_count], kind="mergesort")
