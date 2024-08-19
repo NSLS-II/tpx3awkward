@@ -243,11 +243,9 @@ def _ingest_raw_data(data):
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
                 if (head_max > tail_min) and (head_max - tail_min > 2**32):
-                    prev_ts[prev_ts < 2**33] += np.uint64(2**34)
+                    prev_ts[prev_ts < (tail_min+head_max)/2] += np.uint64(2**34)
                     _ts_0 += np.uint64(2**34)
                 ts[:photon_count] = prev_ts + (_ts - _ts_0)
-
-            # TODO: Do we want to adjust timestamps after SPIDR rollower even if no heartbeat was received at all?
             
             hb_init_flag = False
             photon_count += 1
@@ -285,6 +283,13 @@ def _ingest_raw_data(data):
 
         else:
             raise Exception(f"Not supported: {msg}")
+
+    # Check if there were no heartbeat messages and adjust for potential SPIDR rollovers
+    if heartbeat_msb is None:
+        head_max = max(ts[:10])
+        tail_min = min(ts[-10:])
+        if (head_max > tail_min) and (head_max - tail_min > 2**32):
+            ts[ts < (tail_min+head_max)/2] += np.uint64(2**34)
 
     # Sort the timestamps
     indx = np.argsort(ts[:photon_count], kind="mergesort")
