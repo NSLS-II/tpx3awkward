@@ -286,6 +286,7 @@ def _ingest_raw_data(data):
 
     # Check if there were no heartbeat messages and adjust for potential SPIDR rollovers
     if heartbeat_msb is None:
+        warnings.warn("No heartbeat messages received; decoded timestamps may be inaccurate.")
         head_max = max(ts[:10])
         tail_min = min(ts[-10:])
         if (head_max > tail_min) and (head_max - tail_min > 2**32):
