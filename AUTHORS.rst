@@ -10,4 +10,6 @@ Maintainer
 Contributors
 ------------
 
+* Thomas Caswell <tcaswell@bnl.gov>
 * Justin Goodrich <jgoodrich@bnl.gov>
+* Eugene Matviychuk <ymatviych1@bnl.gov>
