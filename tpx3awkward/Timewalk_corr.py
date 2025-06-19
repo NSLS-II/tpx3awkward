@@ -13,6 +13,7 @@ import itertools as itertools
 from tqdm import tqdm
 from fast_histogram import histogram2d
 from scipy.optimize import curve_fit
+from _utils import cluster_df_optimized
 
 
 TIMESTAMP_VALUE = 1.5625*1e-9 # each raw timestamp is 1.5625 seconds
@@ -23,125 +24,6 @@ DEFAULT_CLUSTER_TW = int(DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTA
 
 tw = DEFAULT_CLUSTER_TW
 radius = DEFAULT_CLUSTER_RADIUS
-
-### modified functions for clustering below, probably no reason to change
-def cluster_df_optimized(df, tw = tw, radius = radius):
-    events = df[["t", "x", "y", "ToT", "t"]].values
-    events[:, 0] = np.floor_divide(events[:, 0], tw)  # Bin timestamps into time windows
-
-    labels = cluster_df3(events, radius, tw)
-
-    return labels, events[:, 1:]
-
-
-@numba.jit(nopython=True,cache=True)
-def cluster_df3(events, radius, tw):
-    n = len(events)
-    labels = np.full(n, -1, dtype=np.int64)
-    cluster_id = 0
-
-    max_time = radius * tw  # Maximum time difference allowed for clustering
-    radius_sq = radius ** 2  # Use squared radius to avoid unnecessary sqrt computation
-
-    for i in range(n):
-        if labels[i] == -1:  # If event is unclustered
-            labels[i] = cluster_id
-            for j in range(i + 1, n):  # Scan forward only
-                if events[j, 4] - events[i, 4] > max_time:  # Early exit based on time
-                    break
-                # Compute squared Euclidean distance (without sqrt for performance)
-                dx = events[i, 0] - events[j, 0]
-                dy = events[i, 1] - events[j, 1]
-                dt = events[i, 2] - events[j, 2]
-                distance_sq = dx * dx + dy * dy + dt * dt
-
-                if distance_sq <= radius_sq:  # Compare squared distance
-                    labels[j] = cluster_id
-            cluster_id += 1
-
-    return labels
-
-@numba.jit(nopython=True,cache=True)
-def group_indices(labels):
-    """
-    Group indices by cluster ID using pre-allocated arrays in a Numba-optimized way.
-
-    Parameters
-    ----------
-    labels : np.ndarray
-        Array of cluster labels for each event.
-    num_clusters : int
-        Number of unique clusters.
-    max_cluster_size : int
-        Maximum number of events in a single cluster.
-
-    Returns
-    -------
-    np.ndarray
-        A 2D NumPy array of shape (num_clusters, max_cluster_size), where each row corresponds to a cluster 
-        and contains event indices padded with -1 for unused slots.
-    """
-    num_clusters = np.max(labels) + 1  # Assume no noise, all labels are valid clusters
-    max_cluster_size = np.bincount(labels).max()
-    cluster_array = -1 * np.ones((num_clusters, max_cluster_size), dtype=np.int32)
-    cluster_counts = np.zeros(num_clusters, dtype=np.int32)
-
-    for idx in range(labels.shape[0]):
-        cluster_idx = labels[idx]  # Label is directly the cluster ID
-        cluster_array[cluster_idx, cluster_counts[cluster_idx]] = idx
-        cluster_counts[cluster_idx] += 1
-
-    return cluster_array
-
-
-@numba.jit(nopython=True,cache=True)
-def centroid_clusters(
-    cluster_arr: np.ndarray, events: np.ndarray
-) -> tuple[np.ndarray]:  
-    """
-    Performs the centroiding of a group of clusters using Numba.  Note I originally attempted to unpack the clusters using list comprehensions, but this approach is significantly faster.
-
-    Parameters
-    ----------
-    clusters : nd.array
-        The numpy representation of the clusters' event indices.
-    events : nd.array
-        The numpy represetation of the event data.
-
-    Returns
-    -------
-    tuple[np.ndarray]
-        t, xc, yc, ToT_max, ToT_sum, and n (number of events) in each cluster.
-    """
-    num_clusters = cluster_arr.shape[0]
-    max_cluster = cluster_arr.shape[1]
-    t = np.zeros(num_clusters, dtype="uint64")
-    xc = np.zeros(num_clusters, dtype="float32")
-    yc = np.zeros(num_clusters, dtype="float32")
-    ToT_max = np.zeros(num_clusters, dtype="uint32")
-    ToT_sum = np.zeros(num_clusters, dtype="uint32")
-    n = np.zeros(num_clusters, dtype="ubyte")
-
-    for cluster_id in range(num_clusters):
-        _ToT_max = np.ushort(0)
-        for event_num in range(max_cluster):
-            event = cluster_arr[cluster_id, event_num]
-            if event > -1:  # if we have an event here
-                if events[event, 2] > _ToT_max:  # find the max ToT, assign, use that time
-                    _ToT_max = events[event, 2]
-                    t[cluster_id] = events[event, 3]
-                    ToT_max[cluster_id] = _ToT_max
-                xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
-                yc[cluster_id] += events[event, 1] * events[event, 2]
-                ToT_sum[cluster_id] += events[event, 2]  # calcuate sum
-                n[cluster_id] += np.ubyte(1)  # number of events in cluster
-            else:
-                break
-        xc[cluster_id] /= ToT_sum[cluster_id]  # normalize
-        yc[cluster_id] /= ToT_sum[cluster_id]
-
-    return t, xc, yc, ToT_max, ToT_sum, 
-
 
 def timewalk_corr_exp(ToT, b = 38.2, c = -0.0054): 
     return (b*np.exp(c*ToT)).astype(np.uint64)
