@@ -97,7 +97,7 @@ def _shift_xy(chip, row, col):
 
 
 @numba.jit(nopython=True, cache=True)
-def decode_xy(msg, chip):
+def decode_xy(msg, chip, tram_correct = False):
     # these names and math are adapted from c++ code
     l_pix_addr = (msg >> np.uint(44)) & np.uint(0xFFFF)
     # This is laid out 16ibts which are 2 interleaved 8 bit unsigned ints
@@ -120,7 +120,24 @@ def decode_xy(msg, chip):
         # '0000000000000100'
         dcol + ((l_pix_addr & np.uint(0x4)) >> np.uint(2)),
     )
-    return rowcol[1], rowcol[0]
+
+    ts_correct = 0
+    if tram_correct:
+        tmp = dcol/2
+        if chip == 0:
+            if tmp >= 97 and tmp <= 101:
+                ts_correct = -16
+        elif chip == 1:
+            if tmp == 93 or (tmp >= 97 and tmp <= 102):
+                ts_correct = -16
+        elif chip == 2:
+            if tmp >= 97 and tmp <= 101:
+                ts_correct = -16
+        elif chip == 3:
+            if tmp == 93 or (tmp >= 97 and tmp <= 101):
+                ts_correct = -16    
+    
+    return rowcol[1], rowcol[0], ts_correct
 
 
 @numba.jit(nopython=True, cache=True)
@@ -129,7 +146,7 @@ def get_spidr(msg):
 
 
 @numba.jit(nopython=True, cache=True)
-def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
+def decode_message(msg, chip, heartbeat_time: np.uint64 = 0, tram_correct = False):
     """Decode TPX3 packages of the second type corresponding to photon events (id'd via 0xB upper nibble)
 
     Parameters
@@ -160,7 +177,7 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
         Arrays of pixel coordinates, ToT, and timestamps.
     """
     msg, heartbeat_time = np.uint64(msg), np.uint64(heartbeat_time)    # Force types
-    x, y = decode_xy(msg, chip)  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
+    x, y, ts_correct = decode_xy(msg, chip, tram_correct)  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
     # ToA is 14 bits
     ToA = (msg >> np.uint(30)) & np.uint(0x3FFF)
     # ToT is 10 bits; report in ns
@@ -189,14 +206,14 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
     # Phase correction
     phase = np.uint((x / 2) % 16) or np.uint(16)
     # Construct timestamp with phase correction
-    ts = (global_time << np.uint(4)) - FToA + phase
+    ts = (global_time << np.uint(4)) - FToA + phase + ts_correct
 
     return x, y, ToT, ts
 
 
 @numba.jit(nopython=True, cache=True)
-def _ingest_raw_data(data):
-
+def _ingest_raw_data(data, tram_correct = False):
+    
     chips = np.zeros_like(data, dtype=np.uint8)
     x = np.zeros_like(data, dtype="u2")
     y = np.zeros_like(data, dtype="u2")
@@ -225,7 +242,8 @@ def _ingest_raw_data(data):
         elif matches_nibble(msg, 0xB):
             # Type 2: photon event (id'd via 0xB upper nibble)
             chips[photon_count] = chip_indx
-            _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time)
+            _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time, tram_correct=tram_correct)
+            
             x[photon_count] = _x
             y[photon_count] = _y
             tot[photon_count] = _tot
@@ -235,7 +253,7 @@ def _ingest_raw_data(data):
             if hb_init_flag and (photon_count > 0):
                 prev_ts = ts[:photon_count]   # This portion needs to be adjusted
                 # Find what the current timestamp would be without global heartbeat
-                _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
+                _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0), tram_correct=tram_correct)
                 # Check if there is a SPIDR rollover in the beginning of the file before the heartbeat
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
@@ -298,7 +316,7 @@ def _ingest_raw_data(data):
     return x, y, tot, ts, chips
 
 
-def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
+def ingest_raw_data(data: IA, tram_correct = False) -> Dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
 
@@ -314,14 +332,14 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, ToT, t, chip".split(","), _ingest_raw_data(data))
+        for k, v in zip("x, y, ToT, t, chip".split(","), _ingest_raw_data(data, tram_correct))
     }
 
 
 """ 
 Some basic functions that help take the initial output of ingest_raw_data and finish the processing.
 """
-def tpx_to_raw_df(fpath: Union[str, Path]) -> pd.DataFrame:
+def tpx_to_raw_df(fpath: Union[str, Path], tram_correct = False) -> pd.DataFrame:
     """
     Parses a .tpx3 file and returns the raw data after timesorting.
 
@@ -335,8 +353,8 @@ def tpx_to_raw_df(fpath: Union[str, Path]) -> pd.DataFrame:
     pd.DataFrame
        DataFrame of raw events from the .tpx3 file.
     """
-    raw_df = pd.DataFrame(ingest_raw_data(raw_as_numpy(fpath)))
-    return raw_df.sort_values("t").reset_index(drop=True) # should we specify the sorting algorithm? at this point? it should be sorted anyway, but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
+    raw_df = pd.DataFrame(ingest_raw_data(raw_as_numpy(fpath), tram_correct)) # ... 
+    return raw_df.sort_values("t").reset_index(drop=True) # should we specify the sorting algorithm? at this point, it should be sorted anyway, but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
 
 
 def drop_zero_tot(df: pd.DataFrame) -> pd.DataFrame:
