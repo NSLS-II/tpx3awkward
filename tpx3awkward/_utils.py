@@ -403,7 +403,7 @@ def cluster_df(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS)
                 dt = events[i, 2] - events[j, 2]
                 distance_sq = dx * dx + dy * dy + dt * dt
 
-                if distance_sq <= radius_sq: 
+                if distance_sq <= radius_sq:
                     labels[j] = cluster_id
             cluster_id += 1
 
@@ -640,10 +640,9 @@ def timewalk_corr_exp(ToT, b = 167.0, c = -0.016):
     return np.rint(b * np.exp(c * ToT) / 1.5625).astype(np.uint64)
 
 
-def timewalk_corr(df: pd.DataFrame, b = 167.0, c = -0.016) -> None:
+def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
     """Applies timewalk correction in place."""
-    df.loc[:, 't'] -= timewalk_corr_exp(df['ToT'].to_numpy(), b, c)
-    return df
+    return t - timewalk_corr_exp(tot, b, c)
 
 @numba.njit(cache=True)
 def tot_to_energy(tot, a, b, c, t):
@@ -756,7 +755,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess = False):
         # Get all existing _cent.h5 files in that directory
         existing_h5_files = [p for p in h5_dir.glob("*_cent.h5")]
         
-        # Check which _cent.h5 files are missingl
+        # Check which _cent.h5 files are missing
         unmatched_files.extend(tpx3_file for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files) if h5_cent_file not in existing_h5_files)
 
     if reprocess:
@@ -807,6 +806,29 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
 
     # Save DataFrame
     df.to_hdf(fpath, key="df", format="table", mode="w")
+
+def centroid_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, trim_correct: bool = None, timewalk_correct: bool = False, energy_calib: np.ndarray = None):
+
+    include_energy = isinstance(energy_calib, np.ndarray)
+    
+    # apply gap (needed for correct pixel mapping to energy calibrations)
+    df.loc[df['x'] >= 255.5, 'x'] += 2
+    df.loc[df['y'] >= 255.5, 'y'] += 2
+    if trim_correct is not None:
+        df = trim_corr(df, trim_correct)               
+    
+    if timewalk_correct:
+        df['t_corr'] = timewalk_corr(df['t'].to_numpy(), df['ToT'].to_numpy())
+    
+    if include_energy:
+        df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_calib)
+    
+    cluster_labels, events = cluster_df_optimized(df, tw, radius, include_energy=include_energy)
+    df['cluster_id'] = cluster_labels
+    cluster_array = group_indices(cluster_labels)
+    data = centroid_clusters(cluster_array, events, include_energy=include_energy)
+    cdf = pd.DataFrame(ingest_cent_data(data, include_energy=include_energy)).sort_values("t").reset_index(drop=True)
+    return cdf
 
 
 def convert_tpx_file(
