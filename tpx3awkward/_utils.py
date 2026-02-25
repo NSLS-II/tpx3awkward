@@ -368,7 +368,7 @@ DEFAULT_CLUSTER_TW_MICROSECONDS = 0.3
 DEFAULT_CLUSTER_TW = int(DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTAMP_VALUE)
 
 
-def cluster_df_optimized(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
+def cluster(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
     cols = ["t", "x", "y", "ToT", "t"]
 
     if include_energy:
@@ -377,13 +377,13 @@ def cluster_df_optimized(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_R
     events = df[cols].to_numpy()
     events[:, 0] = np.floor_divide(events[:, 0], tw)  # Bin timestamps into time windows
 
-    labels = cluster_df(events, radius, tw)
+    labels = get_cluster_labels(events, radius, tw)
 
     return labels, events[:, 1:]
 
 
 @numba.jit(nopython=True, cache=True)
-def cluster_df(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS):
+def get_cluster_labels(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS):
     n = len(events)
     labels = np.full(n, -1, dtype=np.int64)
     cluster_id = 0
@@ -648,7 +648,7 @@ def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
 def tot_to_energy(tot, a, b, c, t):
     # prevent divide by 0
     if a == 0:
-        return 0
+        return np.nan
     return ((a*t + tot - b) + np.sqrt(np.power(a, 2) * np.power(t, 2) + 2*a*b*t + 4*a*c - 2*a*t*tot + np.power(b, 2) - 2*b*tot + np.power(tot, 2))) / (2*a)
 
 @numba.njit(cache=True)
@@ -807,32 +807,26 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
     # Save DataFrame
     df.to_hdf(fpath, key="df", format="table", mode="w")
 
-def centroid_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, trim_correct: bool = None, timewalk_correct: bool = False, energy_calib: np.ndarray = None):
-
-    include_energy = isinstance(energy_calib, np.ndarray)
-    
+def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
+    include_energy = isinstance(energy_parameters, np.ndarray)
     # apply gap (needed for correct pixel mapping to energy calibrations)
     df.loc[df['x'] >= 255.5, 'x'] += 2
     df.loc[df['y'] >= 255.5, 'y'] += 2
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)               
-    
     if timewalk_correct:
         df['t_corr'] = timewalk_corr(df['t'].to_numpy(), df['ToT'].to_numpy())
-    
     if include_energy:
-        df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_calib)
-    
-    cluster_labels, events = cluster_df_optimized(df, tw, radius, include_energy=include_energy)
+        df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_parameters)
+    cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
     df['cluster_id'] = cluster_labels
     cluster_array = group_indices(cluster_labels)
     data = centroid_clusters(cluster_array, events, include_energy=include_energy)
-    cdf = pd.DataFrame(ingest_cent_data(data, include_energy=include_energy)).sort_values("t").reset_index(drop=True)
-    return cdf
 
+    return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy)).sort_values("t").reset_index(drop=True)
 
 def convert_tpx_file(
-    tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, trim_correct: bool = None, timewalk_correct: bool = False, print_details: bool = False, overwrite: bool = True, energy_calib: np.ndarray = None
+    tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -855,13 +849,13 @@ def convert_tpx_file(
         Boolean toggle about whether to print detailed data.
     overwrite : bool = True
         Boolean toggle about whether to overwrite pre-existing data.
-    energy_calib: np.ndarray = None
+    energy_parameters: np.ndarray = None
         numpy array of dimension (514, 514, 4) and type float64 that contains the parameters to the E(ToT) function
     """
     if isinstance(tpx3_fpath, str):
         tpx3_fpath = Path(tpx3_fpath)
     
-    include_energy = isinstance(energy_calib, np.ndarray)
+    include_energy = isinstance(energy_parameters, np.ndarray)
 
     if tpx3_fpath.exists():
         if tpx3_fpath.suffix == ".tpx3":
@@ -895,38 +889,11 @@ def convert_tpx_file(
                     
                         if print_details:
                             print("Loading {} complete. {} events found.".format(tpx3_fpath.name, num_events))
-        
-                        if trim_correct is not None:
-                            if print_details:
-                                print("Performing trim correction on {}".format(tpx3_fpath.name))
-                            df = trim_corr(df, trim_correct)               
-                            
-                        if timewalk_correct:
-                            if print_details:
-                                print("Performing timewalk correction on {}".format(tpx3_fpath.name))
-                            df = timewalk_corr(df)
 
-                        if include_energy:
-                            if print_details:
-                                print("Performing energy estimation on {}".format(tpx3_fpath.name))
-                            df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_calib)
-                    
-                        cluster_labels, events = cluster_df_optimized(df, tw, radius, include_energy=include_energy)
-                        df['cluster_id'] = cluster_labels
+                        cdf = process_raw_df(df, tw, radius, energy_calib=energy_parameters, timewalk_correct=timewalk_correct, trim_correct=trim_correct)
+
                         if print_details:
-                            print("Clustering {} complete. {} clusters found. Saving {}...".format(tpx3_fpath.name, cluster_labels.max()+1, h5_fpath.name))
-    
-                        save_df(df, h5_fpath)
-                        if print_details:
-                            print("Saving {} complete. Centroiding...".format(h5_fpath.name))
-                        
-                        cluster_array = group_indices(cluster_labels)
-                        data = centroid_clusters(cluster_array, events, include_energy=include_energy)
-                        
-                        cdf = pd.DataFrame(ingest_cent_data(data, include_energy=include_energy)).sort_values("t").reset_index(drop=True)
-                        if print_details:
-                            print("Centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
-                            # save cdf
+                            print("Clustering and centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
     
                         save_df(cdf, cent_h5_fpath)                  
                         if print_details:
@@ -944,7 +911,7 @@ def convert_tpx_file(
                         if print_details:
                             print("Moving onto next file...")
     
-                        df, cdf, cluster_labels, events, cluster_array, data = None, None, None, None, None, None   
+                        del df, cdf
                         gc.collect()
                         return to_return
 
