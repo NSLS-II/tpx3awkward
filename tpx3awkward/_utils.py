@@ -467,7 +467,8 @@ def centroid_clusters(
                 if events[event, 2] > _ToT_max:  # find the max ToT, assign, use that time
                     _ToT_max = events[event, 2]
                     t[cluster_id] = events[event, 3]
-                    t_corr[cluster_id] = timewalk_corr(events[event, 3], _ToT_max)
+                    if timewalk_correct:
+                        t_corr[cluster_id] = events[event, 3] - timewalk_corr_exp(_ToT_max)
                     ToT_max[cluster_id] = _ToT_max
                 xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
                 yc[cluster_id] += events[event, 1] * events[event, 2]
