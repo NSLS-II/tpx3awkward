@@ -618,7 +618,7 @@ def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
 def timewalk_corr_exp(ToT, b = 167.0, c = -0.016):
     return np.rint(b * np.exp(c * ToT) / 1.5625).astype(np.uint64)
 
-
+@numba.njit(cache=True, fastmath=True)
 def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
     """Applies timewalk correction in place."""
     return t - timewalk_corr_exp(tot, b, c)
@@ -793,8 +793,6 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
     df.loc[df['y'] >= 255.5, 'y'] += 2
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)               
-    # if timewalk_correct:
-        # df['t_corr'] = timewalk_corr(df['t'].to_numpy(), df['ToT'].to_numpy())
     if include_energy:
         df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_parameters)
     cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
