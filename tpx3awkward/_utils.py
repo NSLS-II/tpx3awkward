@@ -547,33 +547,6 @@ def add_centroid_cols(
     return df
 
 
-def add_centroid_cols_dask(
-    df, gap: bool = True
-):
-    """
-    Calculates centroid positions to the nearest pixel and the timestamp in nanoseconds.
-
-    Parameters
-    ----------
-    df : dd.DataFrame
-        Input centroided dataframe
-    gap : bool = True
-        Determines whether to implement large gap correction by adding 2 empty pixels offsets
-
-    Returns
-    -------
-    dd.DataFrame
-        Originally dataframe with new columns x, y, and t_ns added.
-    """
-    if gap:
-        df['xc'] = df['xc'].mask(cond=df['xc'] >= 255.5, other= df['xc'] + 2)
-        df['yc'] = df['yc'].mask(cond=df['yc'] >= 255.5, other= df['yc'] + 2)
-    df["x"] = dd.DataFrame.round(df["xc"]).astype(np.uint16)
-    df["y"] = dd.DataFrame.round(df["yc"]).astype(np.uint16)
-    df["t_ns"] = df["t"] * 1.5625
-
-    #df.compute()
-    return df
 
 
 def trim_corr_file(mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qmicroscope/jgoodrich/new_clustering/bool_mask_total.csv"):
