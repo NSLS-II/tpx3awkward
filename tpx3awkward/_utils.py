@@ -890,7 +890,7 @@ def convert_tpx_file(
                         if print_details:
                             print("Loading {} complete. {} events found.".format(tpx3_fpath.name, num_events))
 
-                        cdf = process_raw_df(df, tw, radius, energy_calib=energy_parameters, timewalk_correct=timewalk_correct, trim_correct=trim_correct)
+                        cdf = process_raw_df(df, tw, radius, energy_parameters=energy_parameters, timewalk_correct=timewalk_correct, trim_correct=trim_correct)
 
                         if print_details:
                             print("Clustering and centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
