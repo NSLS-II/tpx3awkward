@@ -484,13 +484,7 @@ def centroid_clusters(
             xc[cluster_id] /= ToT_sum[cluster_id]  # normalize
             yc[cluster_id] /= ToT_sum[cluster_id]
 
-    ret = [t, xc, yc, ToT_max, ToT_sum, n]
-    if include_energy:
-        ret.append(e_sum)
-    if timewalk_correct:
-        ret.append(t_corr)
-
-    return tuple(ret)
+    return t, xc, yc, ToT_max, ToT_sum, n, e_sum, t_corr
 
 
 def ingest_cent_data(
@@ -550,6 +544,8 @@ def add_centroid_cols(
     df["x"] = np.round(df["xc"]).astype(np.uint16) # sometimes you just want to know the closest pixel
     df["y"] = np.round(df["yc"]).astype(np.uint16)
     df["t_ns"] = (df["t"].astype(np.float64) * 1.5625) # better way to convert to ns while maintaining precision?
+    if "t_corr" in df:
+        df["t_corr_ns"] = (df["t_corr"].astype(np.float64) * 1.5625)
 
     return df
 
@@ -619,7 +615,6 @@ def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
 def timewalk_corr_exp(ToT, b = 167.0, c = -0.016):
     return np.uint64(np.rint(b * np.exp(c * ToT) / 1.5625))
 
-@numba.njit(cache=True, fastmath=True)
 def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
     """Applies timewalk correction in place."""
     return t - timewalk_corr_exp(tot, b, c)
