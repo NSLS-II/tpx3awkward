@@ -445,7 +445,7 @@ def group_indices(labels):
 
 @numba.jit(nopython=True, cache=True)
 def centroid_clusters(
-    cluster_arr: np.ndarray, events: np.ndarray, include_energy: bool = False
+    cluster_arr: np.ndarray, events: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
 ) -> tuple[np.ndarray]:  
 
     num_clusters = cluster_arr.shape[0]
@@ -457,6 +457,7 @@ def centroid_clusters(
     ToT_sum = np.zeros(num_clusters, dtype="uint32")
     n = np.zeros(num_clusters, dtype="ubyte")
     e_sum = np.zeros(num_clusters, dtype="float32")
+    t_corr = np.zeros(num_clusters, dtype="uint64")
 
     for cluster_id in range(num_clusters):
         _ToT_max = np.ushort(0)
@@ -466,6 +467,7 @@ def centroid_clusters(
                 if events[event, 2] > _ToT_max:  # find the max ToT, assign, use that time
                     _ToT_max = events[event, 2]
                     t[cluster_id] = events[event, 3]
+                    t_corr[cluster_id] = timewalk_corr(events[event, 3], _ToT_max)
                     ToT_max[cluster_id] = _ToT_max
                 xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
                 yc[cluster_id] += events[event, 1] * events[event, 2]
@@ -474,22 +476,24 @@ def centroid_clusters(
 
                 if include_energy:
                     e_sum[cluster_id] += events[event, 4]
-
             else:
                 break
+
         if ToT_sum[cluster_id] != 0:
             xc[cluster_id] /= ToT_sum[cluster_id]  # normalize
             yc[cluster_id] /= ToT_sum[cluster_id]
 
-    return t, xc, yc, ToT_max, ToT_sum, e_sum, n
-    # if include_energy:
-        # return t, xc, yc, ToT_max, ToT_sum, e_sum, n
-    # else:
-        # return t, xc, yc, ToT_max, ToT_sum, n
+    ret = [t, xc, yc, ToT_max, ToT_sum, n]
+    if include_energy:
+        ret.append(e_sum)
+    if timewalk_correct:
+        ret.append(t_corr)
+
+    return tuple(ret)
 
 
 def ingest_cent_data(
-    data: np.ndarray, include_energy: bool = False
+    data: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
 ) -> Dict[str, np.ndarray]:
     """
     Performs the centroiding of a group of clusters.
@@ -509,12 +513,14 @@ def ingest_cent_data(
         or
         ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] if include_energy=True
     """
-    keys = (
-        "t,xc,yc,ToT_max,ToT_sum,e_sum,n".split(",")
-        if include_energy
-        else "t,xc,yc,ToT_max,ToT_sum,n".split(",")
-    )
-
+    key_string = "t,xc,yc,ToT_max,ToT_sum,n"
+    
+    if include_energy:
+        key_string += ",e_sum"
+    if timewalk_correct:
+        key_string += ",t_corr"
+    
+    keys = key_string.split(",")
     return {k: v for k, v in zip(keys, data)}
 
 
@@ -668,7 +674,7 @@ def empty_raw_df(include_energy: bool = False) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def empty_cent_df(include_energy: bool = False) -> pd.DataFrame:
+def empty_cent_df(include_energy: bool = False, timewalk_correct: bool = True) -> pd.DataFrame:
     """
     Create an empty DataFrame with the expected columns from ingest_cent_data() 
     and the specified data types.
@@ -683,8 +689,6 @@ def empty_cent_df(include_energy: bool = False) -> pd.DataFrame:
     pd.DataFrame
         Empty DataFrame with columns:
         ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] and appropriate dtypes
-        or
-        ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] if include_energy is True
     """
     data = {
         "t": np.array([], dtype="uint64"),       # uint64
@@ -697,6 +701,8 @@ def empty_cent_df(include_energy: bool = False) -> pd.DataFrame:
 
     if include_energy:
         data["e_sum"] = np.array([], dtype="float32")
+    if timewalk_correct:
+        data["t_corr"] = np.array([], dtype="uint64")
 
     return pd.DataFrame(data)
 
@@ -787,16 +793,16 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
     df.loc[df['y'] >= 255.5, 'y'] += 2
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)               
-    if timewalk_correct:
-        df['t_corr'] = timewalk_corr(df['t'].to_numpy(), df['ToT'].to_numpy())
+    # if timewalk_correct:
+        # df['t_corr'] = timewalk_corr(df['t'].to_numpy(), df['ToT'].to_numpy())
     if include_energy:
         df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_parameters)
     cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
     df['cluster_id'] = cluster_labels
     cluster_array = group_indices(cluster_labels)
-    data = centroid_clusters(cluster_array, events, include_energy=include_energy)
+    data = centroid_clusters(cluster_array, events, include_energy=include_energy, timewalk_correct=timewalk_correct)
 
-    return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy)).sort_values("t").reset_index(drop=True)
+    return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)).sort_values("t").reset_index(drop=True)
 
 def convert_tpx_file(
     tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
