@@ -617,7 +617,7 @@ def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
 
 @numba.njit(cache=True, fastmath=True)
 def timewalk_corr_exp(ToT, b = 167.0, c = -0.016):
-    return np.rint(b * np.exp(c * ToT) / 1.5625).astype(np.uint64)
+    return np.uint64(np.rint(b * np.exp(c * ToT) / 1.5625))
 
 @numba.njit(cache=True, fastmath=True)
 def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
