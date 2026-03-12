@@ -196,7 +196,6 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
 
 @numba.jit(nopython=True, cache=True)
 def _ingest_raw_data(data):
-
     chips = np.zeros_like(data, dtype=np.uint8)
     x = np.zeros_like(data, dtype="u2")
     y = np.zeros_like(data, dtype="u2")
@@ -369,23 +368,28 @@ DEFAULT_CLUSTER_TW_MICROSECONDS = 0.3
 DEFAULT_CLUSTER_TW = int(DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTAMP_VALUE)
 
 
-def cluster_df_optimized(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS):
-    events = df[["t", "x", "y", "ToT", "t"]].to_numpy()
+def cluster(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
+    cols = ["t", "x", "y", "ToT", "t"]
+
+    if include_energy:
+        cols.append("e")
+
+    events = df[cols].to_numpy()
     events[:, 0] = np.floor_divide(events[:, 0], tw)  # Bin timestamps into time windows
 
-    labels = cluster_df(events, radius, tw)
+    labels = get_cluster_labels(events, radius, tw)
 
     return labels, events[:, 1:]
 
 
 @numba.jit(nopython=True, cache=True)
-def cluster_df(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS):
+def get_cluster_labels(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS):
     n = len(events)
     labels = np.full(n, -1, dtype=np.int64)
     cluster_id = 0
 
     max_time = radius * tw  # maximum time difference allowed for clustering
-    radius_sq = radius ** 2  
+    radius_sq = radius ** 2
 
     for i in range(n):
         if labels[i] == -1:  # if event is unclustered
@@ -399,7 +403,7 @@ def cluster_df(events, radius = DEFAULT_CLUSTER_TW, tw = DEFAULT_CLUSTER_RADIUS)
                 dt = events[i, 2] - events[j, 2]
                 distance_sq = dx * dx + dy * dy + dt * dt
 
-                if distance_sq <= radius_sq: 
+                if distance_sq <= radius_sq:
                     labels[j] = cluster_id
             cluster_id += 1
 
@@ -441,7 +445,7 @@ def group_indices(labels):
 
 @numba.jit(nopython=True, cache=True)
 def centroid_clusters(
-    cluster_arr: np.ndarray, events: np.ndarray
+    cluster_arr: np.ndarray, events: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
 ) -> tuple[np.ndarray]:  
 
     num_clusters = cluster_arr.shape[0]
@@ -452,6 +456,8 @@ def centroid_clusters(
     ToT_max = np.zeros(num_clusters, dtype="uint32")
     ToT_sum = np.zeros(num_clusters, dtype="uint32")
     n = np.zeros(num_clusters, dtype="ubyte")
+    e_sum = np.zeros(num_clusters, dtype="float32")
+    t_corr = np.zeros(num_clusters, dtype="uint64")
 
     for cluster_id in range(num_clusters):
         _ToT_max = np.ushort(0)
@@ -461,21 +467,28 @@ def centroid_clusters(
                 if events[event, 2] > _ToT_max:  # find the max ToT, assign, use that time
                     _ToT_max = events[event, 2]
                     t[cluster_id] = events[event, 3]
+                    if timewalk_correct:
+                        t_corr[cluster_id] = events[event, 3] - timewalk_corr_exp(_ToT_max)
                     ToT_max[cluster_id] = _ToT_max
                 xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
                 yc[cluster_id] += events[event, 1] * events[event, 2]
                 ToT_sum[cluster_id] += events[event, 2]  # calcuate sum
                 n[cluster_id] += np.ubyte(1)  # number of events in cluster
+
+                if include_energy:
+                    e_sum[cluster_id] += events[event, 4]
             else:
                 break
-        xc[cluster_id] /= ToT_sum[cluster_id]  # normalize
-        yc[cluster_id] /= ToT_sum[cluster_id]
 
-    return t, xc, yc, ToT_max, ToT_sum, n
+        if ToT_sum[cluster_id] != 0:
+            xc[cluster_id] /= ToT_sum[cluster_id]  # normalize
+            yc[cluster_id] /= ToT_sum[cluster_id]
+
+    return t, xc, yc, ToT_max, ToT_sum, n, e_sum, t_corr
 
 
 def ingest_cent_data(
-    data: np.ndarray
+    data: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
 ) -> Dict[str, np.ndarray]:
     """
     Performs the centroiding of a group of clusters.
@@ -484,19 +497,26 @@ def ingest_cent_data(
     ----------
     data : np.ndarray
         The stream of cluster data from cluster_arr_to_cent()
+    include_energy : bool, optional
+        Whether the data includes energy sum (e_sum). Default is False.
 
     Returns
     -------
     Dict[str, np.ndarray]
-       Keys of t, xc, yc, ToT_max, ToT_sum, and n (number of events) in each cluster.
+        A dictionary with keys:
+        ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'n']
+        or
+        ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] if include_energy=True
     """
-    return {
-        k.strip(): v
-        for k, v in zip(
-            "t, xc, yc, ToT_max, ToT_sum, n".split(","),
-            data,
-        )
-    }
+    key_string = "t,xc,yc,ToT_max,ToT_sum,n"
+    
+    if include_energy:
+        key_string += ",e_sum"
+    if timewalk_correct:
+        key_string += ",t_corr"
+    
+    keys = key_string.split(",")
+    return {k: v for k, v in zip(keys, data)}
 
 
 def add_centroid_cols(
@@ -520,40 +540,16 @@ def add_centroid_cols(
     if gap:
         df.loc[df["xc"] >= 255.5, "xc"] += 2
         df.loc[df["yc"] >= 255.5, "yc"] += 2
+        
     df["x"] = np.round(df["xc"]).astype(np.uint16) # sometimes you just want to know the closest pixel
     df["y"] = np.round(df["yc"]).astype(np.uint16)
     df["t_ns"] = (df["t"].astype(np.float64) * 1.5625) # better way to convert to ns while maintaining precision?
+    if "t_corr" in df:
+        df["t_corr_ns"] = (df["t_corr"].astype(np.float64) * 1.5625)
 
     return df
 
 
-def add_centroid_cols_dask(
-    df, gap: bool = True
-):
-    """
-    Calculates centroid positions to the nearest pixel and the timestamp in nanoseconds.
-
-    Parameters
-    ----------
-    df : dd.DataFrame
-        Input centroided dataframe
-    gap : bool = True
-        Determines whether to implement large gap correction by adding 2 empty pixels offsets
-
-    Returns
-    -------
-    dd.DataFrame
-        Originally dataframe with new columns x, y, and t_ns added.
-    """
-    if gap:
-        df['xc'] = df['xc'].mask(cond=df['xc'] >= 255.5, other= df['xc'] + 2)
-        df['yc'] = df['yc'].mask(cond=df['yc'] >= 255.5, other= df['yc'] + 2)
-    df["x"] = dd.DataFrame.round(df["xc"]).astype(np.uint16)
-    df["y"] = dd.DataFrame.round(df["yc"]).astype(np.uint16)
-    df["t_ns"] = df["t"] * 1.5625
-
-    #df.compute()
-    return df
 
 
 def trim_corr_file(mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qmicroscope/jgoodrich/new_clustering/bool_mask_total.csv"):
@@ -617,59 +613,94 @@ def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
 
 @numba.njit(cache=True, fastmath=True)
 def timewalk_corr_exp(ToT, b = 167.0, c = -0.016):
-    return np.rint(b * np.exp(c * ToT) / 1.5625).astype(np.uint64)
+    return np.uint64(np.rint(b * np.exp(c * ToT) / 1.5625))
 
-
-def timewalk_corr(df: pd.DataFrame, b = 167.0, c = -0.016) -> None:
+def timewalk_corr(t, tot, b = 167.0, c = -0.016) -> None:
     """Applies timewalk correction in place."""
-    df.loc[:, 't'] -= timewalk_corr_exp(df['ToT'].to_numpy(), b, c)
-    return df
+    return t - timewalk_corr_exp(tot, b, c)
 
+@numba.njit(cache=True)
+def tot_to_energy(tot, a, b, c, t):
+    # prevent divide by 0
+    if a == 0:
+        return np.nan
+    return ((a*t + tot - b) + np.sqrt(np.power(a, 2) * np.power(t, 2) + 2*a*b*t + 4*a*c - 2*a*t*tot + np.power(b, 2) - 2*b*tot + np.power(tot, 2))) / (2*a)
+
+@numba.njit(cache=True)
+def estimate_energies(x, y, ToT, energy_calib):
+    e = np.empty(len(x), dtype=np.float32)
+    for i in range(len(e)):
+        a, b, c, t = energy_calib[x[i]][y[i]][:]
+        e[i] = tot_to_energy(ToT[i], a, b, c, t)
+    return e
 
 """
 Functions to help process multiple related .tpx3 files into Pandas dataframes stored in .h5 files.
 """
-def empty_raw_df() -> pd.DataFrame:
+def empty_raw_df(include_energy: bool = False) -> pd.DataFrame:
     """
     Create an empty DataFrame with the expected columns from ingest_raw_data() 
     and the specified data types.
+
+    Parameters
+    ----------
+    include_energy : bool, optional
+        Whether to include the 'e' column (energy estimates). Default is False.
 
     Returns
     -------
     pd.DataFrame
         Empty DataFrame with columns:
-        ['x', 'y', 'ToT', 't', 'chip', 'cluster_id'] and appropriate dtypes.
+        ['x', 'y', 'ToT', 't', 'chip', 'cluster_id'] and appropriate dtypes
+        or
+        ['x', 'y', 'ToT', 'e', 't', 'chip', 'cluster_id'] if include_energy is True.
     """
-    return pd.DataFrame({
+    data = {
         "x": np.array([], dtype="u2"),         # uint16
         "y": np.array([], dtype="u2"),         # uint16
         "ToT": np.array([], dtype="u4"),       # uint32
         "t": np.array([], dtype="u8"),         # uint64
         "chip": np.array([], dtype="u1"),      # uint8
         "cluster_id": np.array([], dtype="u8") # uint64
-    })
+    }
+
+    if include_energy:
+        data["e"] = np.array([], dtype="float32")
+    
+    return pd.DataFrame(data)
 
 
-def empty_cent_df() -> pd.DataFrame:
+def empty_cent_df(include_energy: bool = False, timewalk_correct: bool = True) -> pd.DataFrame:
     """
     Create an empty DataFrame with the expected columns from ingest_cent_data() 
     and the specified data types.
+
+    Parameters
+    ----------
+    include_energy : bool, optional
+        Whether to include the 'e_sum' column (energy estimates). Default is False.
 
     Returns
     -------
     pd.DataFrame
         Empty DataFrame with columns:
-        ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'n'] and appropriate dtypes.
+        ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] and appropriate dtypes
     """
-    return pd.DataFrame({
+    data = {
         "t": np.array([], dtype="uint64"),       # uint64
         "xc": np.array([], dtype="float32"),     # float32
         "yc": np.array([], dtype="float32"),     # float32
         "ToT_max": np.array([], dtype="uint32"), # uint32
         "ToT_sum": np.array([], dtype="uint32"), # uint32
         "n": np.array([], dtype="u1")            # uint8 (ubyte)
-    })
+    }
 
+    if include_energy:
+        data["e_sum"] = np.array([], dtype="float32")
+    if timewalk_correct:
+        data["t_corr"] = np.array([], dtype="uint64")
+
+    return pd.DataFrame(data)
 
 def find_unmatched_tpx3_files(directory_list, reprocess = False):
     
@@ -699,7 +730,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess = False):
         # Get all existing _cent.h5 files in that directory
         existing_h5_files = [p for p in h5_dir.glob("*_cent.h5")]
         
-        # Check which _cent.h5 files are missingl
+        # Check which _cent.h5 files are missing
         unmatched_files.extend(tpx3_file for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files) if h5_cent_file not in existing_h5_files)
 
     if reprocess:
@@ -751,9 +782,24 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
     # Save DataFrame
     df.to_hdf(fpath, key="df", format="table", mode="w")
 
+def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
+    include_energy = isinstance(energy_parameters, np.ndarray)
+    # apply gap (needed for correct pixel mapping to energy calibrations)
+    df.loc[df['x'] >= 255.5, 'x'] += 2
+    df.loc[df['y'] >= 255.5, 'y'] += 2
+    if trim_correct is not None:
+        df = trim_corr(df, trim_correct)               
+    if include_energy:
+        df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(), df['ToT'].to_numpy(), energy_parameters)
+    cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
+    df['cluster_id'] = cluster_labels
+    cluster_array = group_indices(cluster_labels)
+    data = centroid_clusters(cluster_array, events, include_energy=include_energy, timewalk_correct=timewalk_correct)
+
+    return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)).sort_values("t").reset_index(drop=True)
 
 def convert_tpx_file(
-    tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, trim_correct: bool = None, timewalk_correct: bool = False, print_details: bool = False, overwrite: bool = True
+    tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -776,10 +822,13 @@ def convert_tpx_file(
         Boolean toggle about whether to print detailed data.
     overwrite : bool = True
         Boolean toggle about whether to overwrite pre-existing data.
-        
+    energy_parameters: np.ndarray = None
+        numpy array of dimension (514, 514, 4) and type float64 that contains the parameters to the E(ToT) function
     """
     if isinstance(tpx3_fpath, str):
         tpx3_fpath = Path(tpx3_fpath)
+    
+    include_energy = isinstance(energy_parameters, np.ndarray)
 
     if tpx3_fpath.exists():
         if tpx3_fpath.suffix == ".tpx3":
@@ -813,33 +862,11 @@ def convert_tpx_file(
                     
                         if print_details:
                             print("Loading {} complete. {} events found.".format(tpx3_fpath.name, num_events))
-        
-                        if trim_correct is not None:
-                            if print_details:
-                                print("Performing trim correction on {}".format(tpx3_fpath.name))
-                            df = trim_corr(df, trim_correct)               
-                            
-                        if timewalk_correct:
-                            if print_details:
-                                print("Performing timewalk correction on {}".format(tpx3_fpath.name))
-                            df = timewalk_corr(df)
-                    
-                        cluster_labels, events = cluster_df_optimized(df, tw, radius)
-                        df['cluster_id'] = cluster_labels
+
+                        cdf = process_raw_df(df, tw, radius, energy_parameters=energy_parameters, timewalk_correct=timewalk_correct, trim_correct=trim_correct)
+
                         if print_details:
-                            print("Clustering {} complete. {} clusters found. Saving {}...".format(tpx3_fpath.name, cluster_labels.max()+1, h5_fpath.name))
-    
-                        save_df(df, h5_fpath)
-                        if print_details:
-                            print("Saving {} complete. Centroiding...".format(h5_fpath.name))
-                        
-                        cluster_array = group_indices(cluster_labels)
-                        data = centroid_clusters(cluster_array, events)
-                        
-                        cdf = pd.DataFrame(ingest_cent_data(data)).sort_values("t").reset_index(drop=True)
-                        if print_details:
-                            print("Centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
-                            # save cdf
+                            print("Clustering and centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
     
                         save_df(cdf, cent_h5_fpath)                  
                         if print_details:
@@ -857,7 +884,7 @@ def convert_tpx_file(
                         if print_details:
                             print("Moving onto next file...")
     
-                        df, cdf, cluster_labels, events, cluster_array, data = None, None, None, None, None, None   
+                        del df, cdf
                         gc.collect()
                         return to_return
 
@@ -865,8 +892,8 @@ def convert_tpx_file(
 
                         if print_details:
                             print("No events found! Saving empty dataframes.")
-                        save_df(empty_raw_df(), h5_fpath) 
-                        save_df(empty_cent_df(), cent_h5_fpath) 
+                        save_df(empty_raw_df(include_energy=include_energy), h5_fpath) 
+                        save_df(empty_cent_df(include_energy=include_energy), cent_h5_fpath) 
 
                         gc.collect()
 
@@ -890,7 +917,7 @@ def convert_tpx_file(
 
 
 def convert_tpx3_files_parallel(
-    fpaths: Union[List[str], List[Path]], num_workers: int = None, trim_correct: Union[str, Path] = None, **kwargs
+    fpaths: Union[List[str], List[Path]], num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx_file().
@@ -903,6 +930,8 @@ def convert_tpx3_files_parallel(
         Number of worker processes to use. Defaults to (CPU count - 4) to leave room for other tasks.
     trim_mask_fpath : str, optional
         Path to the trim correction mask. If None, no correction is applied.
+    energy_calib_fpath: np.ndarray = None
+        fpath pointing to energy estimation parameters array saved as .npy file, if not specified then energy won't be estimated.
     **kwargs : dict
         Additional keyword arguments passed to `convert_tpx_file()`.
     """
@@ -914,9 +943,17 @@ def convert_tpx3_files_parallel(
     
         # Load the mask once
         trim_mask = trim_corr_file(trim_correct)
+
+        # Load energy estimation params
+        energy_calib = None
+        if energy_calib_fpath is not None:
+            try:
+                energy_calib = np.load(energy_calib_fpath)
+            except Exception as e:
+                print(f"Failed to load calibration: {e}")
     
         # Pass the preloaded mask to all workers
-        worker_func = partial(convert_tpx_file, trim_correct=trim_mask, **kwargs)
+        worker_func = partial(convert_tpx_file, trim_correct=trim_mask, energy_calib=energy_calib, **kwargs)
     
         with multiprocessing.Pool(processes=max_workers) as pool:
             results = list(tqdm(pool.imap_unordered(worker_func, fpaths), total=len(fpaths), desc="Processing files"))
@@ -930,7 +967,7 @@ def convert_tpx3_files_parallel(
 
 
 def convert_tpx3_files(
-    fpaths: Union[List[str], List[Path]], trim_correct: Union[str, Path] = None, print_details: bool = True, **kwargs
+    fpaths: Union[List[str], List[Path]], trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in a single process using convert_tpx_file().
@@ -949,8 +986,14 @@ def convert_tpx3_files(
     # Load the mask once (only if provided)
     trim_mask = trim_corr_file(trim_correct)
 
+    # Load energy estimation params
+    energy_calib = None
+    if energy_calib_fpath is not None:
+        try:
+            energy_calib = np.load(energy_calib_fpath)
+        except Exception as e:
+            print(f"Failed to load calibration: {e}")
+
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
-        convert_tpx_file(file, trim_correct=trim_mask, print_details=print_details, **kwargs)
-
-        
+        convert_tpx_file(file, trim_correct=trim_mask, print_details=print_details, energy_calib=energy_calib, **kwargs)
