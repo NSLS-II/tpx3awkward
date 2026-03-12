@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 [project]
 name = "tpx3awkward"
 authors = [
-  { name = "Joseph Hanrahan", email = "jhanrahan@bnl.gov" },
+  { name = "Thomas Caswell", email = "tcaswell@bnl.gov" },
+  { name = "Justin Goodrich", email = "jgoodrich@bnl.gov" },
+  { name = "Eugene Matviychuk", emial = "ymatviych1@bnl.gov" },
+  { name = "Joseph Hanrahan", email = "jhanrahan@bnl.gov" }
 ]
 description = "A great package."
 readme = "README.md"
