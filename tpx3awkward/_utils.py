@@ -645,7 +645,7 @@ def estimate_energies(x, y, ToT, energy_calib):
 
 
 """
-Functions to help process multiple related .tpx3 files into Pandas dataframes stored in .h5 files.
+Functions to help process multiple related .tpx3 files into Pandas dataframes stored in .parquet files.
 """
 
 
@@ -717,7 +717,7 @@ def empty_cent_df(include_energy: bool = False, timewalk_correct: bool = True) -
 
 def find_unmatched_tpx3_files(directory_list, reprocess=False):
 
-    # Finds .tpx3 files in the given directories that do not have corresponding _cent.h5 files.
+    # Finds .tpx3 files in the given directories that do not have corresponding _cent{extension} files.
     # Returns a list of Path objects.
 
     unmatched_files = []
@@ -767,7 +767,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cen
 
     filepath = Path(str(filepath).replace("file:", ""))
 
-    if extension not in vars(f_type).items():
+    if extension not in vars(f_type).values():
         raise TypeError(f"path conversion to unknown file type {extension}")
 
     if "/nsls2/data/chx/proposals/" in str(filepath):
@@ -785,14 +785,14 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cen
 
 def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
     """
-    Save a Pandas DataFrame to an HDF5 file, ensuring that all necessary directories exist.
+    Save a Pandas DataFrame to a parquet file, ensuring that all necessary directories exist.
 
     Parameters
     ----------
     df : pd.DataFrame
         The DataFrame to be saved.
     fpath : Union[str, Path]
-        The full path to the output HDF5 file.
+        The full path to the output .parquet file.
     """
     fpath = Path(fpath)  # Ensure fpath is a Path object
 
@@ -808,9 +808,16 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
         case _:
             raise TypeError(f"unknown/unimplemented file type: {fpath.suffix}")
 
+    df.to_parquet(
+        fpath,
+        engine="pyarrow",
+        index=False,   # important: do not rely on pandas index
+        compression="snappy",  
+    )
+    #df.to_hdf(fpath, key="df", format="table", mode="w")
 
-def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
-    include_energy = isinstance(energy_parameters, np.ndarray)
+def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
+    include_energy = isinstance(energy_calib, np.ndarray)
     # apply gap (needed for correct pixel mapping to energy calibrations)
     df.loc[df['x'] >= 255.5, 'x'] += 2
     df.loc[df['y'] >= 255.5, 'y'] += 2
@@ -818,7 +825,7 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
         df = trim_corr(df, trim_correct)
     if include_energy:
         df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(),
-                                    df['ToT'].to_numpy(), energy_parameters)
+                                    df['ToT'].to_numpy(), energy_calib)
     cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
     df['cluster_id'] = cluster_labels
     cluster_array = group_indices(cluster_labels)
@@ -829,7 +836,7 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
 
 
 def convert_tpx_file(
-    tpx3_fpath: Union[str, Path], extension: str = f_type.HDF, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
+    tpx3_fpath: Union[str, Path], extension: str = f_type.HDF, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -854,13 +861,13 @@ def convert_tpx_file(
         Boolean toggle about whether to print detailed data.
     overwrite : bool = True
         Boolean toggle about whether to overwrite pre-existing data.
-    energy_parameters: np.ndarray = None
+    energy_calib: np.ndarray = None
         numpy array of dimension (514, 514, 4) and type float64 that contains the parameters to the E(ToT) function
     """
     if isinstance(tpx3_fpath, str):
         tpx3_fpath = Path(tpx3_fpath)
-
-    include_energy = isinstance(energy_parameters, np.ndarray)
+    
+    include_energy = isinstance(energy_calib, np.ndarray)
 
     if tpx3_fpath.exists():
         if tpx3_fpath.suffix == ".tpx3":
@@ -895,7 +902,7 @@ def convert_tpx_file(
                         if print_details:
                             print("Loading {} complete. {} events found.".format(tpx3_fpath.name, num_events))
 
-                        cdf = process_raw_df(df, tw, radius, energy_parameters=energy_parameters,
+                        cdf = process_raw_df(df, tw, radius, energy_calib=energy_calib,
                                              timewalk_correct=timewalk_correct, trim_correct=trim_correct)
 
                         if print_details:
@@ -968,7 +975,7 @@ def convert_tpx3_files_parallel(
     energy_calib_fpath: np.ndarray = None
         fpath pointing to energy estimation parameters array saved as .npy file, if not specified then energy won't be estimated.
     **kwargs : dict
-        Additional keyword arguments passed to `convert_tpx_file()`.
+        Additional keyword arguments passed to `convert_tpx3_file()`.
     """
     if len(fpaths) > 0:
         if num_workers is None:
@@ -989,7 +996,7 @@ def convert_tpx3_files_parallel(
 
         # Pass the preloaded mask to all workers
         worker_func = partial(convert_tpx_file, extension=extension, trim_correct=trim_mask,
-                              energy_parameters=energy_calib, **kwargs)
+                              energy_calib=energy_calib, **kwargs)
 
         with multiprocessing.Pool(processes=max_workers) as pool:
             results = list(tqdm(pool.imap_unordered(worker_func, fpaths),
@@ -1020,7 +1027,7 @@ def convert_tpx3_files(
     print_details : bool, optional
         Boolean toggle about whether to print detailed data. Default is True.
     **kwargs : dict
-        Additional keyword arguments passed to `convert_tpx_file()`.
+        Additional keyword arguments passed to `convert_tpx3_file()`.
     """
     # Load the mask once (only if provided)
     trim_mask = trim_corr_file(trim_correct)
@@ -1036,4 +1043,4 @@ def convert_tpx3_files(
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
         convert_tpx_file(file, extension=extension, trim_correct=trim_mask,
-                         print_details=print_details, energy_parameters=energy_calib, **kwargs)
+                         print_details=print_details, energy_calib=energy_calib, **kwargs)
