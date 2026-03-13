@@ -804,16 +804,15 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
         case f_type.HDF:
             df.to_hdf(fpath, key="df", format="table", mode="w")
         case f_type.PARQUET:
-            df.to_parquet(fpath, compression='lz4')
+            df.to_parquet(
+                fpath,
+                engine="pyarrow",
+                index=False,   # important: do not rely on pandas index
+                compression="snappy",  
+            )
         case _:
             raise TypeError(f"unknown/unimplemented file type: {fpath.suffix}")
 
-    df.to_parquet(
-        fpath,
-        engine="pyarrow",
-        index=False,   # important: do not rely on pandas index
-        compression="snappy",  
-    )
     #df.to_hdf(fpath, key="df", format="table", mode="w")
 
 def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
@@ -836,7 +835,7 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
 
 
 def convert_tpx_file(
-    tpx3_fpath: Union[str, Path], extension: str = f_type.HDF, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
+    tpx3_fpath: Union[str, Path], extension: str = f_type.PARQUET, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -957,7 +956,7 @@ def convert_tpx_file(
 
 
 def convert_tpx3_files_parallel(
-    fpaths: Union[List[str], List[Path]], extension=f_type.HDF, num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: Union[List[str], List[Path]], extension=f_type.PARQUET, num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx_file().
@@ -1011,7 +1010,7 @@ def convert_tpx3_files_parallel(
 
 
 def convert_tpx3_files(
-    fpaths: Union[List[str], List[Path]], extension: str = f_type.HDF, trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: Union[List[str], List[Path]], extension: str = f_type.PARQUET, trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in a single process using convert_tpx_file().
