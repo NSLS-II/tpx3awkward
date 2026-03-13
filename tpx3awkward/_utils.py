@@ -775,7 +775,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cen
     else:
         if not ("/nsls2/data/chx/legacy/" in str(filepath)):
             warnings.warn(
-                f"unexpected file path used, operation will proceed but it is suggested to confirm correct target directory:\n\t{filepath}")
+                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory")
         out_path = str(filepath)
     # else:
     #     raise ValueError(f"Unknown path format: {filepath}")
