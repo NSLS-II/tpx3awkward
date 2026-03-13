@@ -11,11 +11,15 @@ import warnings
 import glob
 from tqdm import tqdm 
 import gc
+from types import SimpleNamespace
+
 
 
 IA = NDArray[np.uint64]
 UnSigned = TypeVar("UnSigned", IA, np.uint64)
-
+f_type = SimpleNamespace(
+    HDF = '.h5',
+    PARQUET = '.parquet')
 
 def raw_as_numpy(fpath: Union[str, Path]) -> IA:
     """
@@ -728,7 +732,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess = False):
         h5_dir = h5_cent_files[0].parent
         
         # Get all existing _cent.h5 files in that directory
-        existing_h5_files = [p for p in h5_dir.glob("*_cent.h5")]
+        existing_h5_files = [p for p in h5_dir.iterdir() if p.suffix in vars(f_type).values()]
         
         # Check which _cent.h5 files are missing
         unmatched_files.extend(tpx3_file for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files) if h5_cent_file not in existing_h5_files)
@@ -739,9 +743,9 @@ def find_unmatched_tpx3_files(directory_list, reprocess = False):
         return unmatched_files
 
 
-def converted_path(filepath, cent=False):
+def converted_path(filepath, extension = f_type.HDF, cent=False):
     """
-    Converts .tpx3 file path(s) to corresponding .h5 file path(s).
+    Converts .tpx3 file path(s) to corresponding output file path(s).
     Handles individual strings, Path objects, lists, or numpy arrays.
 
     This is specific to CHX beamline pre and post data security. Is there a better way or place to store this?
@@ -753,14 +757,19 @@ def converted_path(filepath, cent=False):
     
     filepath = Path(str(filepath).replace("file:", ""))
     
-    if "/nsls2/data/chx/proposals/" in str(filepath):
-        h5_path = Path(str(filepath).replace("/assets/", "/Compressed_Data/").replace(".tpx3", "_cent.h5" if cent else ".h5"))
-    elif "/nsls2/data/chx/legacy/" in str(filepath):
-        h5_path = Path(str(filepath).replace(".tpx3", "_cent.h5" if cent else ".h5"))
-    else:
-        raise ValueError(f"Unknown path format: {filepath}")
+    if extension not in vars(f_type).items():
+        raise TypeError(f"path conversion to unknown file type {extension}")
     
-    return h5_path
+    if "/nsls2/data/chx/proposals/" in str(filepath):
+        out_path = str(filepath).replace("/assets/", "/Compressed_Data/")
+    else:
+        if not ("/nsls2/data/chx/legacy/" in str(filepath)):
+            warnings.warn(f"unexpected file path used, operation will proceed but it is suggested to confirm correct target directory:\n\t{filepath}")
+        out_path = str(filepath)
+    # else:
+    #     raise ValueError(f"Unknown path format: {filepath}")
+    
+    return Path(out_path.replace(".tpx3", f"{"cent" if cent else ""}{extension}"))
 
 
 def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
@@ -780,7 +789,13 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
     fpath.parent.mkdir(parents=True, exist_ok=True)
 
     # Save DataFrame
-    df.to_hdf(fpath, key="df", format="table", mode="w")
+    match fpath.suffix:
+        case f_type.HDF:
+            df.to_hdf(fpath, key="df", format="table", mode="w")
+        case f_type.PARQUET:
+            df.to_parquet(fpath,compression='lz4')
+        case _:
+            raise TypeError(f"unknown/unimplemented file type: {fpath.suffix}")
 
 def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
     include_energy = isinstance(energy_parameters, np.ndarray)
@@ -799,7 +814,7 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
     return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)).sort_values("t").reset_index(drop=True)
 
 def convert_tpx_file(
-    tpx3_fpath: Union[str, Path], tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
+    tpx3_fpath: Union[str, Path], extension:str = f_type.HDF, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_parameters: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -833,14 +848,14 @@ def convert_tpx_file(
     if tpx3_fpath.exists():
         if tpx3_fpath.suffix == ".tpx3":
 
-            h5_fpath = converted_path(tpx3_fpath, cent=False)
-            cent_h5_fpath = converted_path(tpx3_fpath, cent=True)
+            out_fpath = converted_path(tpx3_fpath, extension=extension, cent=False)
+            cent_out_fpath = converted_path(tpx3_fpath, extension=extension, cent=True)
         
             try: 
                 
                 tpx3_fpath_size = tpx3_fpath.stat().st_size  # Get file size
-                have_df = h5_fpath.exists()       # Check if dfname exists
-                have_dfc = cent_h5_fpath.exists()  # Check if dfcname exists
+                have_df = out_fpath.exists()       # Check if dfname exists
+                have_dfc = cent_out_fpath.exists()  # Check if dfcname exists
     
                 if have_df and have_dfc and not overwrite:
                     
@@ -866,19 +881,19 @@ def convert_tpx_file(
                         cdf = process_raw_df(df, tw, radius, energy_parameters=energy_parameters, timewalk_correct=timewalk_correct, trim_correct=trim_correct)
 
                         if print_details:
-                            print("Clustering and centroiding complete. Saving to {}...".format(cent_h5_fpath.name))
+                            print("Clustering and centroiding complete. Saving to {}...".format(cent_out_fpath.name))
     
-                        save_df(cdf, cent_h5_fpath)                  
+                        save_df(cdf, cent_out_fpath)                  
                         if print_details:
-                            print("Saving {} complete. Checking file existence...".format(cent_h5_fpath.name))
+                            print("Saving {} complete. Checking file existence...".format(cent_out_fpath.name))
                             
-                        if cent_h5_fpath.exists():
+                        if cent_out_fpath.exists():
                             if print_details:
-                                print("Confirmed {} exists!".format(cent_h5_fpath.name))
+                                print("Confirmed {} exists!".format(cent_out_fpath.name))
                             to_return = True
                         else:
                             if print_details:
-                                print("WARNING: {} doesn't exist but it should?!".format(cent_h5_fpath.name))
+                                print("WARNING: {} doesn't exist but it should?!".format(cent_out_fpath.name))
                             to_return = False
 
                         if print_details:
@@ -892,8 +907,8 @@ def convert_tpx_file(
 
                         if print_details:
                             print("No events found! Saving empty dataframes.")
-                        save_df(empty_raw_df(include_energy=include_energy), h5_fpath) 
-                        save_df(empty_cent_df(include_energy=include_energy), cent_h5_fpath) 
+                        save_df(empty_raw_df(include_energy=include_energy), out_fpath) 
+                        save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath) 
 
                         gc.collect()
 
@@ -917,7 +932,7 @@ def convert_tpx_file(
 
 
 def convert_tpx3_files_parallel(
-    fpaths: Union[List[str], List[Path]], num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: Union[List[str], List[Path]], extension=f_type.HDF, num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx_file().
@@ -953,7 +968,7 @@ def convert_tpx3_files_parallel(
                 print(f"Failed to load calibration: {e}")
     
         # Pass the preloaded mask to all workers
-        worker_func = partial(convert_tpx_file, trim_correct=trim_mask, energy_calib=energy_calib, **kwargs)
+        worker_func = partial(convert_tpx_file, extension=extension, trim_correct=trim_mask, energy_parameters=energy_calib, **kwargs)
     
         with multiprocessing.Pool(processes=max_workers) as pool:
             results = list(tqdm(pool.imap_unordered(worker_func, fpaths), total=len(fpaths), desc="Processing files"))
@@ -967,7 +982,7 @@ def convert_tpx3_files_parallel(
 
 
 def convert_tpx3_files(
-    fpaths: Union[List[str], List[Path]], trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: Union[List[str], List[Path]], extension=f_type.HDF, trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
     Convert a list of .tpx3 files in a single process using convert_tpx_file().
@@ -996,4 +1011,4 @@ def convert_tpx3_files(
 
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
-        convert_tpx_file(file, trim_correct=trim_mask, print_details=print_details, energy_calib=energy_calib, **kwargs)
+        convert_tpx_file(file,extension=extension, trim_correct=trim_mask, print_details=print_details, energy_parameters=energy_calib, **kwargs)
