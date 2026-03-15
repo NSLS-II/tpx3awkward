@@ -376,7 +376,7 @@ DEFAULT_CLUSTER_TW_MICROSECONDS = 0.3
 DEFAULT_CLUSTER_TW = int(DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTAMP_VALUE)
 
 
-def cluster(df, tw=DEFAULT_CLUSTER_TW, radius=DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
+def cluster(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
     cols = ["t", "x", "y", "ToT", "t"]
 
     if include_energy:
@@ -385,13 +385,13 @@ def cluster(df, tw=DEFAULT_CLUSTER_TW, radius=DEFAULT_CLUSTER_RADIUS, include_en
     events = df[cols].to_numpy()
     events[:, 0] = np.floor_divide(events[:, 0], tw)  # Bin timestamps into time windows
 
-    labels = get_cluster_labels(events, radius, tw)
+    labels = get_cluster_labels(events, tw, radius)
 
     return labels, events[:, 1:]
 
 
 @numba.jit(nopython=True, cache=True)
-def get_cluster_labels(events, radius=DEFAULT_CLUSTER_TW, tw=DEFAULT_CLUSTER_RADIUS):
+def get_cluster_labels(events, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS):
     n = len(events)
     labels = np.full(n, -1, dtype=np.int64)
     cluster_id = 0
@@ -753,7 +753,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
         return unmatched_files
 
 
-def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cent: bool = False):
+def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET, cent: bool = False):
     """
     Converts .tpx3 file path(s) to corresponding output file path(s).
     Handles individual strings, Path objects, lists, or numpy arrays.
@@ -763,7 +763,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cen
     Returns Path objects.
     """
     if isinstance(filepath, (list, np.ndarray)):
-        return [converted_path(fp, cent) for fp in filepath]
+        return [converted_path(fp, extension = extension, cent = cent) for fp in filepath]
 
     filepath = Path(str(filepath).replace("file:", ""))
 
@@ -780,7 +780,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.HDF, cen
     # else:
     #     raise ValueError(f"Unknown path format: {filepath}")
 
-    return Path(out_path.replace(".tpx3", f"{"cent" if cent else ""}{extension}"))
+    return Path(out_path.replace(".tpx3", f"{"_cent" if cent else ""}{extension}"))
 
 
 def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
@@ -818,8 +818,6 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
 def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
     include_energy = isinstance(energy_calib, np.ndarray)
     # apply gap (needed for correct pixel mapping to energy calibrations)
-    df.loc[df['x'] >= 255.5, 'x'] += 2
-    df.loc[df['y'] >= 255.5, 'y'] += 2
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)
     if include_energy:
@@ -834,7 +832,7 @@ def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int
     return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)).sort_values("t").reset_index(drop=True)
 
 
-def convert_tpx_file(
+def convert_tpx3_file(
     tpx3_fpath: Union[str, Path], extension: str = f_type.PARQUET, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
 ):
     """
@@ -904,6 +902,9 @@ def convert_tpx_file(
                         cdf = process_raw_df(df, tw, radius, energy_calib=energy_calib,
                                              timewalk_correct=timewalk_correct, trim_correct=trim_correct)
 
+                        cdf.loc[cdf['xc'] >= 255.5, 'xc'] += 2 # maybe we should put this somewhere else...
+                        cdf.loc[cdf['yc'] >= 255.5, 'yc'] += 2
+
                         if print_details:
                             print("Clustering and centroiding complete. Saving to {}...".format(cent_out_fpath.name))
 
@@ -959,7 +960,7 @@ def convert_tpx3_files_parallel(
     fpaths: Union[List[str], List[Path]], extension=f_type.PARQUET, num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
-    Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx_file().
+    Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx3_file().
 
     Parameters
     ----------
@@ -994,7 +995,7 @@ def convert_tpx3_files_parallel(
                 print(f"Failed to load calibration: {e}")
 
         # Pass the preloaded mask to all workers
-        worker_func = partial(convert_tpx_file, extension=extension, trim_correct=trim_mask,
+        worker_func = partial(convert_tpx3_file, extension=extension, trim_correct=trim_mask,
                               energy_calib=energy_calib, **kwargs)
 
         with multiprocessing.Pool(processes=max_workers) as pool:
@@ -1013,7 +1014,7 @@ def convert_tpx3_files(
     fpaths: Union[List[str], List[Path]], extension: str = f_type.PARQUET, trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
 ):
     """
-    Convert a list of .tpx3 files in a single process using convert_tpx_file().
+    Convert a list of .tpx3 files in a single process using convert_tpx3_file().
 
     Parameters
     ----------
@@ -1041,5 +1042,5 @@ def convert_tpx3_files(
 
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
-        convert_tpx_file(file, extension=extension, trim_correct=trim_mask,
+        convert_tpx3_file(file, extension=extension, trim_correct=trim_mask,
                          print_details=print_details, energy_calib=energy_calib, **kwargs)
