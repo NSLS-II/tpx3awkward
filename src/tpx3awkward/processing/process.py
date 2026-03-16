@@ -1,11 +1,25 @@
-from typing import TypeVar
+from typing import Path, TypeVar
 
 import numba
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 IA = NDArray[np.uint64]
 UnSigned = TypeVar("UnSigned", IA, np.uint64)
+
+
+def raw_as_numpy(fpath: str | Path) -> IA:
+    """
+    Read raw tpx3 data file as a numpy array.
+
+    Each entry is read as a uint8 (64bit unsigned-integer)
+
+    Parameters
+    ----------
+
+    """
+    return np.fromfile(fpath, dtype="<u8")
 
 
 @numba.jit(nopython=True, cache=True)
@@ -305,3 +319,22 @@ def ingest_raw_data(data: IA) -> dict[str, NDArray]:
         k.strip(): v
         for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data))
     }
+
+
+def tpx_to_raw_df(fpath: str | Path) -> pd.DataFrame:
+    """
+    Parses a .tpx3 file and returns the raw data after timesorting.
+
+    Parameters
+    ----------
+    fpath: Union[str, Path]
+        The path to the .tpx3 data to be processed.
+
+    Returns
+    -------
+    pd.DataFrame
+       DataFrame of raw events from the .tpx3 file.
+    """
+    raw_df = pd.DataFrame(ingest_raw_data(raw_as_numpy(fpath)))
+    # should we specify the sorting algorithm? at this point? it should be sorted anyway, but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
+    return raw_df.sort_values("t").reset_index(drop=True)
