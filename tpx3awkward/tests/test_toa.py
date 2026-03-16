@@ -35,6 +35,7 @@ def test_get_spidr(empty_msg):
     assert get_spidr(msg1) == 32768
     assert get_spidr(msg2) == 65535
 
+
 def test_check_spidr_overflow(empty_msg):
     spidr_arr = [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 5, 6, 6, 7, 8, 9, 10]
     spidr_arr.extend(range(10, 65535, 3))
