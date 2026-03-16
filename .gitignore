@@ -186,3 +186,7 @@ Thumbs.db
 # Common editor files
 *~
 *.swp
+
+# pixi-related files
+.pixi
+pixi.lock

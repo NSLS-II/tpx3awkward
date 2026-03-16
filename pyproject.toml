@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.26", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 
@@ -8,7 +8,7 @@ name = "tpx3awkward"
 authors = [
   { name = "Thomas Caswell", email = "tcaswell@bnl.gov" },
   { name = "Justin Goodrich", email = "jgoodrich@bnl.gov" },
-  { name = "Eugene Matviychuk", emial = "ymatviych1@bnl.gov" },
+  { name = "Eugene Matviychuk", email = "ymatviych1@bnl.gov" },
   { name = "Joseph Hanrahan", email = "jhanrahan@bnl.gov" }
 ]
 description = "A great package."
@@ -173,3 +173,10 @@ messages_control.disable = [
   "missing-function-docstring",
   "wrong-import-position",
 ]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+tpx3awkward = { path = ".", editable = true }
