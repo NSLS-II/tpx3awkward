@@ -1,27 +1,23 @@
-import os
-from pathlib import Path
-from typing import TypeVar, Union, Dict, List, Tuple
-import numpy as np
-from numpy.typing import NDArray
-import numba
-import pandas as pd
-import multiprocessing
-from functools import partial
-import warnings
-import glob
-from tqdm import tqdm
 import gc
+import multiprocessing
+import warnings
+from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
+from typing import TypeVar
 
+import numba
+import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
+from tqdm import tqdm
 
 IA = NDArray[np.uint64]
 UnSigned = TypeVar("UnSigned", IA, np.uint64)
-f_type = SimpleNamespace(
-    HDF='.h5',
-    PARQUET='.parquet')
+f_type = SimpleNamespace(HDF=".h5", PARQUET=".parquet")
 
 
-def raw_as_numpy(fpath: Union[str, Path]) -> IA:
+def raw_as_numpy(fpath: str | Path) -> IA:
     """
     Read raw tpx3 data file as a numpy array.
 
@@ -163,8 +159,10 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
     ----------
         Arrays of pixel coordinates, ToT, and timestamps.
     """
-    msg, heartbeat_time = np.uint64(msg), np.uint64(heartbeat_time)    # Force types
-    x, y = decode_xy(msg, chip)  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
+    msg, heartbeat_time = np.uint64(msg), np.uint64(heartbeat_time)  # Force types
+    x, y = decode_xy(
+        msg, chip
+    )  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
     # ToA is 14 bits
     ToA = (msg >> np.uint(30)) & np.uint(0x3FFF)
     # ToT is 10 bits; report in ns
@@ -189,7 +187,9 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
     elif diff == -1 or diff == 3:
         heartbeat_time += np.uint(0x10000000)
     # Construct globaltime
-    global_time = (heartbeat_time & np.uint(0xFFFFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
+    global_time = (heartbeat_time & np.uint(0xFFFFFFFC0000000)) | (
+        ToA_coarse & np.uint(0x3FFFFFFF)
+    )
     # Phase correction
     phase = np.uint((x / 2) % 16) or np.uint(16)
     # Construct timestamp with phase correction
@@ -208,7 +208,7 @@ def _ingest_raw_data(data):
     heartbeat_lsb = None  # np.uint64(0)
     heartbeat_msb = None  # np.uint64(0)
     heartbeat_time = np.uint64(0)
-    hb_init_flag = False    # Indicate when the heartbeat was set for the first time
+    hb_init_flag = False  # Indicate when the heartbeat was set for the first time
 
     photon_count, chip_indx, msg_run_count, expected_msg_count = 0, 0, 0, 0
 
@@ -228,7 +228,9 @@ def _ingest_raw_data(data):
         elif matches_nibble(msg, 0xB):
             # Type 2: photon event (id'd via 0xB upper nibble)
             chips[photon_count] = chip_indx
-            _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time)
+            _x, _y, _tot, _ts = decode_message(
+                msg, chip_indx, heartbeat_time=heartbeat_time
+            )
             x[photon_count] = _x
             y[photon_count] = _y
             tot[photon_count] = _tot
@@ -236,9 +238,11 @@ def _ingest_raw_data(data):
 
             # Adjust timestamps that were set before the first heartbeat was received
             if hb_init_flag and (photon_count > 0):
-                prev_ts = ts[:photon_count]   # This portion needs to be adjusted
+                prev_ts = ts[:photon_count]  # This portion needs to be adjusted
                 # Find what the current timestamp would be without global heartbeat
-                _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
+                _, _, _, _ts_0 = decode_message(
+                    msg, chip_indx, heartbeat_time=np.uint64(0)
+                )
                 # Check if there is a SPIDR rollover in the beginning of the file before the heartbeat
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
@@ -267,12 +271,15 @@ def _ingest_raw_data(data):
                 if heartbeat_lsb is not None:
                     if heartbeat_msb is None:
                         hb_init_flag = True
-                    heartbeat_msb = ((msg >> np.uint(16)) & np.uint64(0xFFFF)) << np.uint(32)
-                    heartbeat_time = (heartbeat_msb | heartbeat_lsb)
+                    heartbeat_msb = (
+                        (msg >> np.uint(16)) & np.uint64(0xFFFF)
+                    ) << np.uint(32)
+                    heartbeat_time = heartbeat_msb | heartbeat_lsb
                     # TODO the c++ code has large jump detection, do not understand why
             else:
-                raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
-            pass
+                raise Exception(
+                    f"Unknown subheader {subheader} in the Global Timestamp message"
+                )
 
             msg_run_count += 1
 
@@ -282,8 +289,8 @@ def _ingest_raw_data(data):
             msg_run_count += 1
 
         # else:
-            # print(f"Exception 'Not supported: {msg}'")
-            # raise Exception(f"Not supported: {msg}")
+        # print(f"Exception 'Not supported: {msg}'")
+        # raise Exception(f"Not supported: {msg}")
 
     # Check if there were no heartbeat messages and adjust for potential SPIDR rollovers
     if heartbeat_msb is None:
@@ -302,7 +309,7 @@ def _ingest_raw_data(data):
     return x, y, tot, ts, chips
 
 
-def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
+def ingest_raw_data(data: IA) -> dict[str, NDArray]:
     """
     Parse values out of raw timepix3 data stream.
 
@@ -318,16 +325,16 @@ def ingest_raw_data(data: IA) -> Dict[str, NDArray]:
     """
     return {
         k.strip(): v
-        for k, v in zip("x, y, ToT, t, chip".split(","), _ingest_raw_data(data))
+        for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data))
     }
 
 
-""" 
+"""
 Some basic functions that help take the initial output of ingest_raw_data and finish the processing.
 """
 
 
-def tpx_to_raw_df(fpath: Union[str, Path]) -> pd.DataFrame:
+def tpx_to_raw_df(fpath: str | Path) -> pd.DataFrame:
     """
     Parses a .tpx3 file and returns the raw data after timesorting.
 
@@ -373,10 +380,17 @@ MICROSECOND = 1e-6
 DEFAULT_CLUSTER_RADIUS = 3
 DEFAULT_CLUSTER_TW_MICROSECONDS = 0.3
 
-DEFAULT_CLUSTER_TW = int(DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTAMP_VALUE)
+DEFAULT_CLUSTER_TW = int(
+    DEFAULT_CLUSTER_TW_MICROSECONDS * MICROSECOND / TIMESTAMP_VALUE
+)
 
 
-def cluster(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, include_energy: bool = False):
+def cluster(
+    df,
+    tw=DEFAULT_CLUSTER_TW,
+    radius=DEFAULT_CLUSTER_RADIUS,
+    include_energy: bool = False,
+):
     cols = ["t", "x", "y", "ToT", "t"]
 
     if include_energy:
@@ -391,13 +405,13 @@ def cluster(df, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS, includ
 
 
 @numba.jit(nopython=True, cache=True)
-def get_cluster_labels(events, tw = DEFAULT_CLUSTER_TW, radius = DEFAULT_CLUSTER_RADIUS):
+def get_cluster_labels(events, tw=DEFAULT_CLUSTER_TW, radius=DEFAULT_CLUSTER_RADIUS):
     n = len(events)
     labels = np.full(n, -1, dtype=np.int64)
     cluster_id = 0
 
     max_time = radius * tw  # maximum time difference allowed for clustering
-    radius_sq = radius ** 2
+    radius_sq = radius**2
 
     for i in range(n):
         if labels[i] == -1:  # if event is unclustered
@@ -435,7 +449,7 @@ def group_indices(labels):
     Returns
     -------
     np.ndarray
-        A 2D NumPy array of shape (num_clusters, max_cluster_size), where each row corresponds to a cluster 
+        A 2D NumPy array of shape (num_clusters, max_cluster_size), where each row corresponds to a cluster
         and contains event indices padded with -1 for unused slots.
     """
     num_clusters = np.max(labels) + 1  # Assume no noise, all labels are valid clusters
@@ -453,7 +467,10 @@ def group_indices(labels):
 
 @numba.jit(nopython=True, cache=True)
 def centroid_clusters(
-    cluster_arr: np.ndarray, events: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
+    cluster_arr: np.ndarray,
+    events: np.ndarray,
+    include_energy: bool = False,
+    timewalk_correct: bool = False,
 ) -> tuple[np.ndarray]:
 
     num_clusters = cluster_arr.shape[0]
@@ -472,13 +489,19 @@ def centroid_clusters(
         for event_num in range(max_cluster):
             event = cluster_arr[cluster_id, event_num]
             if event > -1:  # if we have an event here
-                if events[event, 2] > _ToT_max:  # find the max ToT, assign, use that time
+                if (
+                    events[event, 2] > _ToT_max
+                ):  # find the max ToT, assign, use that time
                     _ToT_max = events[event, 2]
                     t[cluster_id] = events[event, 3]
                     if timewalk_correct:
-                        t_corr[cluster_id] = events[event, 3] - timewalk_corr_exp(_ToT_max)
+                        t_corr[cluster_id] = events[event, 3] - timewalk_corr_exp(
+                            _ToT_max
+                        )
                     ToT_max[cluster_id] = _ToT_max
-                xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
+                xc[cluster_id] += (
+                    events[event, 0] * events[event, 2]
+                )  # x and y centroids by time over threshold
                 yc[cluster_id] += events[event, 1] * events[event, 2]
                 ToT_sum[cluster_id] += events[event, 2]  # calcuate sum
                 n[cluster_id] += np.ubyte(1)  # number of events in cluster
@@ -497,7 +520,7 @@ def centroid_clusters(
 
 def ingest_cent_data(
     data: np.ndarray, include_energy: bool = False, timewalk_correct: bool = False
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
     Performs the centroiding of a group of clusters.
 
@@ -527,9 +550,7 @@ def ingest_cent_data(
     return {k: v for k, v in zip(keys, data)}
 
 
-def add_centroid_cols(
-    df: pd.DataFrame, gap: bool = True
-) -> pd.DataFrame:
+def add_centroid_cols(df: pd.DataFrame, gap: bool = True) -> pd.DataFrame:
     """
     Calculates centroid positions to the nearest pixel and the timestamp in nanoseconds.
 
@@ -549,16 +570,22 @@ def add_centroid_cols(
         df.loc[df["xc"] >= 255.5, "xc"] += 2
         df.loc[df["yc"] >= 255.5, "yc"] += 2
 
-    df["x"] = np.round(df["xc"]).astype(np.uint16)  # sometimes you just want to know the closest pixel
+    df["x"] = np.round(df["xc"]).astype(
+        np.uint16
+    )  # sometimes you just want to know the closest pixel
     df["y"] = np.round(df["yc"]).astype(np.uint16)
-    df["t_ns"] = (df["t"].astype(np.float64) * 1.5625)  # better way to convert to ns while maintaining precision?
+    df["t_ns"] = (
+        df["t"].astype(np.float64) * 1.5625
+    )  # better way to convert to ns while maintaining precision?
     if "t_corr" in df:
-        df["t_corr_ns"] = (df["t_corr"].astype(np.float64) * 1.5625)
+        df["t_corr_ns"] = df["t_corr"].astype(np.float64) * 1.5625
 
     return df
 
 
-def trim_corr_file(mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qmicroscope/jgoodrich/new_clustering/bool_mask_total.csv"):
+def trim_corr_file(
+    mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qmicroscope/jgoodrich/new_clustering/bool_mask_total.csv",
+):
     """
     Load a boolean mask from a file, supporting .npy and .csv formats.
 
@@ -571,7 +598,7 @@ def trim_corr_file(mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qm
     Returns:
     --------
     np.ndarray or None
-        A NumPy boolean array if the file is successfully loaded. 
+        A NumPy boolean array if the file is successfully loaded.
         Returns `None` if the file format is unsupported.
 
     Notes:
@@ -585,13 +612,12 @@ def trim_corr_file(mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qm
 
     mask_fpath = Path(mask_fpath)
 
-    if mask_fpath.suffix == '.npy':
+    if mask_fpath.suffix == ".npy":
         return np.load(mask_fpath).astype(bool)
-    elif mask_fpath.suffix == '.csv':
-        return np.loadtxt(mask_fpath, delimiter=',').astype(bool)
-    else:
-        print("Unsupported file format. Use .npy or .csv. Returning None.")
-        return None
+    if mask_fpath.suffix == ".csv":
+        return np.loadtxt(mask_fpath, delimiter=",").astype(bool)
+    print("Unsupported file format. Use .npy or .csv. Returning None.")
+    return None
 
 
 def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
@@ -607,13 +633,13 @@ def trim_corr(df: pd.DataFrame, total_mask: np.ndarray) -> None:
     """
     if total_mask is None:
         print("Trim correction mask is None. No changes applied.")
-        return
+        return None
 
     # Apply mask condition using direct NumPy indexing
-    df_mask = total_mask[df['x'].to_numpy(), df['y'].to_numpy()]
+    df_mask = total_mask[df["x"].to_numpy(), df["y"].to_numpy()]
 
     # Use `.loc[]` with a boolean mask of the same length as df
-    df.loc[df_mask, 't'] -= 16
+    df.loc[df_mask, "t"] -= 16
     return df
 
 
@@ -632,7 +658,18 @@ def tot_to_energy(tot, a, b, c, t):
     # prevent divide by 0
     if a == 0:
         return np.nan
-    return ((a * t + tot - b) + np.sqrt(np.power(a, 2) * np.power(t, 2) + 2 * a * b * t + 4 * a * c - 2 * a * t * tot + np.power(b, 2) - 2 * b * tot + np.power(tot, 2))) / (2 * a)
+    return (
+        (a * t + tot - b)
+        + np.sqrt(
+            np.power(a, 2) * np.power(t, 2)
+            + 2 * a * b * t
+            + 4 * a * c
+            - 2 * a * t * tot
+            + np.power(b, 2)
+            - 2 * b * tot
+            + np.power(tot, 2)
+        )
+    ) / (2 * a)
 
 
 @numba.njit(cache=True)
@@ -651,7 +688,7 @@ Functions to help process multiple related .tpx3 files into Pandas dataframes st
 
 def empty_raw_df(include_energy: bool = False) -> pd.DataFrame:
     """
-    Create an empty DataFrame with the expected columns from ingest_raw_data() 
+    Create an empty DataFrame with the expected columns from ingest_raw_data()
     and the specified data types.
 
     Parameters
@@ -668,12 +705,12 @@ def empty_raw_df(include_energy: bool = False) -> pd.DataFrame:
         ['x', 'y', 'ToT', 'e', 't', 'chip', 'cluster_id'] if include_energy is True.
     """
     data = {
-        "x": np.array([], dtype="u2"),         # uint16
-        "y": np.array([], dtype="u2"),         # uint16
-        "ToT": np.array([], dtype="u4"),       # uint32
-        "t": np.array([], dtype="u8"),         # uint64
-        "chip": np.array([], dtype="u1"),      # uint8
-        "cluster_id": np.array([], dtype="u8")  # uint64
+        "x": np.array([], dtype="u2"),  # uint16
+        "y": np.array([], dtype="u2"),  # uint16
+        "ToT": np.array([], dtype="u4"),  # uint32
+        "t": np.array([], dtype="u8"),  # uint64
+        "chip": np.array([], dtype="u1"),  # uint8
+        "cluster_id": np.array([], dtype="u8"),  # uint64
     }
 
     if include_energy:
@@ -682,9 +719,11 @@ def empty_raw_df(include_energy: bool = False) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def empty_cent_df(include_energy: bool = False, timewalk_correct: bool = True) -> pd.DataFrame:
+def empty_cent_df(
+    include_energy: bool = False, timewalk_correct: bool = True
+) -> pd.DataFrame:
     """
-    Create an empty DataFrame with the expected columns from ingest_cent_data() 
+    Create an empty DataFrame with the expected columns from ingest_cent_data()
     and the specified data types.
 
     Parameters
@@ -699,12 +738,12 @@ def empty_cent_df(include_energy: bool = False, timewalk_correct: bool = True) -
         ['t', 'xc', 'yc', 'ToT_max', 'ToT_sum', 'e_sum', 'n'] and appropriate dtypes
     """
     data = {
-        "t": np.array([], dtype="uint64"),       # uint64
-        "xc": np.array([], dtype="float32"),     # float32
-        "yc": np.array([], dtype="float32"),     # float32
+        "t": np.array([], dtype="uint64"),  # uint64
+        "xc": np.array([], dtype="float32"),  # float32
+        "yc": np.array([], dtype="float32"),  # float32
         "ToT_max": np.array([], dtype="uint32"),  # uint32
         "ToT_sum": np.array([], dtype="uint32"),  # uint32
-        "n": np.array([], dtype="u1")            # uint8 (ubyte)
+        "n": np.array([], dtype="u1"),  # uint8 (ubyte)
     }
 
     if include_energy:
@@ -732,7 +771,9 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
             continue
 
         # Generate corresponding _cent.h5 file paths
-        h5_cent_files = [converted_path(tpx3_file, cent=True) for tpx3_file in tpx3_files]
+        h5_cent_files = [
+            converted_path(tpx3_file, cent=True) for tpx3_file in tpx3_files
+        ]
 
         if not h5_cent_files:
             continue
@@ -741,19 +782,25 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
         h5_dir = h5_cent_files[0].parent
 
         # Get all existing _cent.h5 files in that directory
-        existing_h5_files = [p for p in h5_dir.iterdir() if p.suffix in vars(f_type).values()]
+        existing_h5_files = [
+            p for p in h5_dir.iterdir() if p.suffix in vars(f_type).values()
+        ]
 
         # Check which _cent.h5 files are missing
-        unmatched_files.extend(tpx3_file for tpx3_file, h5_cent_file in zip(
-            tpx3_files, h5_cent_files) if h5_cent_file not in existing_h5_files)
+        unmatched_files.extend(
+            tpx3_file
+            for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files)
+            if h5_cent_file not in existing_h5_files
+        )
 
     if reprocess:
         return all_tpx3_files
-    else:
-        return unmatched_files
+    return unmatched_files
 
 
-def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET, cent: bool = False):
+def converted_path(
+    filepath: str | Path, extension: str = f_type.PARQUET, cent: bool = False
+):
     """
     Converts .tpx3 file path(s) to corresponding output file path(s).
     Handles individual strings, Path objects, lists, or numpy arrays.
@@ -763,7 +810,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET,
     Returns Path objects.
     """
     if isinstance(filepath, (list, np.ndarray)):
-        return [converted_path(fp, extension = extension, cent = cent) for fp in filepath]
+        return [converted_path(fp, extension=extension, cent=cent) for fp in filepath]
 
     filepath = Path(str(filepath).replace("file:", ""))
 
@@ -773,17 +820,18 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET,
     if "/nsls2/data/chx/proposals/" in str(filepath):
         out_path = str(filepath).replace("/assets/", "/Compressed_Data/")
     else:
-        if not ("/nsls2/data/chx/legacy/" in str(filepath)):
+        if "/nsls2/data/chx/legacy/" not in str(filepath):
             warnings.warn(
-                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory")
+                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory"
+            )
         out_path = str(filepath)
     # else:
     #     raise ValueError(f"Unknown path format: {filepath}")
 
-    return Path(out_path.replace(".tpx3", f"{"_cent" if cent else ""}{extension}"))
+    return Path(out_path.replace(".tpx3", f"{'_cent' if cent else ''}{extension}"))
 
 
-def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
+def save_df(df: pd.DataFrame, fpath: str | Path):
     """
     Save a Pandas DataFrame to a parquet file, ensuring that all necessary directories exist.
 
@@ -807,33 +855,62 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
             df.to_parquet(
                 fpath,
                 engine="pyarrow",
-                index=False,   # important: do not rely on pandas index
-                compression="snappy",  
+                index=False,  # important: do not rely on pandas index
+                compression="snappy",
             )
         case _:
             raise TypeError(f"unknown/unimplemented file type: {fpath.suffix}")
 
-    #df.to_hdf(fpath, key="df", format="table", mode="w")
+    # df.to_hdf(fpath, key="df", format="table", mode="w")
 
-def process_raw_df(df: pd.DataFrame, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None) -> pd.DataFrame:
+
+def process_raw_df(
+    df: pd.DataFrame,
+    tw: float = DEFAULT_CLUSTER_TW,
+    radius: int = DEFAULT_CLUSTER_RADIUS,
+    energy_calib: np.ndarray = None,
+    timewalk_correct: bool = False,
+    trim_correct: bool = None,
+) -> pd.DataFrame:
     include_energy = isinstance(energy_calib, np.ndarray)
     # apply gap (needed for correct pixel mapping to energy calibrations)
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)
     if include_energy:
-        df['e'] = estimate_energies(df['x'].to_numpy(), df['y'].to_numpy(),
-                                    df['ToT'].to_numpy(), energy_calib)
+        df["e"] = estimate_energies(
+            df["x"].to_numpy(), df["y"].to_numpy(), df["ToT"].to_numpy(), energy_calib
+        )
     cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
-    df['cluster_id'] = cluster_labels
+    df["cluster_id"] = cluster_labels
     cluster_array = group_indices(cluster_labels)
-    data = centroid_clusters(cluster_array, events, include_energy=include_energy,
-                             timewalk_correct=timewalk_correct)
+    data = centroid_clusters(
+        cluster_array,
+        events,
+        include_energy=include_energy,
+        timewalk_correct=timewalk_correct,
+    )
 
-    return pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)).sort_values("t").reset_index(drop=True)
+    return (
+        pd.DataFrame(
+            ingest_cent_data(
+                data, include_energy=include_energy, timewalk_correct=timewalk_correct
+            )
+        )
+        .sort_values("t")
+        .reset_index(drop=True)
+    )
 
 
 def convert_tpx3_file(
-    tpx3_fpath: Union[str, Path], extension: str = f_type.PARQUET, tw: float = DEFAULT_CLUSTER_TW, radius: int = DEFAULT_CLUSTER_RADIUS, energy_calib: np.ndarray = None, timewalk_correct: bool = False, trim_correct: bool = None, print_details: bool = False, overwrite: bool = True
+    tpx3_fpath: str | Path,
+    extension: str = f_type.PARQUET,
+    tw: float = DEFAULT_CLUSTER_TW,
+    radius: int = DEFAULT_CLUSTER_RADIUS,
+    energy_calib: np.ndarray = None,
+    timewalk_correct: bool = False,
+    trim_correct: bool = None,
+    print_details: bool = False,
+    overwrite: bool = True,
 ):
     """
     Convert a .tpx3 file into raw and centroided Pandas dataframes, which are stored in .h5 files.
@@ -863,101 +940,115 @@ def convert_tpx3_file(
     """
     if isinstance(tpx3_fpath, str):
         tpx3_fpath = Path(tpx3_fpath)
-    
+
     include_energy = isinstance(energy_calib, np.ndarray)
 
     if tpx3_fpath.exists():
         if tpx3_fpath.suffix == ".tpx3":
-
             out_fpath = converted_path(tpx3_fpath, extension=extension, cent=False)
             cent_out_fpath = converted_path(tpx3_fpath, extension=extension, cent=True)
 
             try:
-
                 tpx3_fpath_size = tpx3_fpath.stat().st_size  # Get file size
-                have_df = out_fpath.exists()       # Check if dfname exists
+                have_df = out_fpath.exists()  # Check if dfname exists
                 have_dfc = cent_out_fpath.exists()  # Check if dfcname exists
 
                 if have_df and have_dfc and not overwrite:
-
-                    print("-> {} already processed, skipping.".format(tpx3_fpath.name))
+                    print(f"-> {tpx3_fpath.name} already processed, skipping.")
                     return False
-
-                else:
-
-                    if print_details:
-                        print("-> Processing {}, size: {:.1f} MB".format(tpx3_fpath.name, tpx3_fpath_size / (1024 * 1024)))
-
-                    if tpx3_fpath_size == 0:
-                        num_events = 0
-                    else:
-                        df = drop_zero_tot(tpx_to_raw_df(tpx3_fpath))
-                        num_events = df.shape[0]
-
-                    if num_events > 0:
-
-                        if print_details:
-                            print("Loading {} complete. {} events found.".format(tpx3_fpath.name, num_events))
-
-                        cdf = process_raw_df(df, tw, radius, energy_calib=energy_calib,
-                                             timewalk_correct=timewalk_correct, trim_correct=trim_correct)
-
-                        cdf.loc[cdf['xc'] >= 255.5, 'xc'] += 2 # maybe we should put this somewhere else...
-                        cdf.loc[cdf['yc'] >= 255.5, 'yc'] += 2
-
-                        if print_details:
-                            print("Clustering and centroiding complete. Saving to {}...".format(cent_out_fpath.name))
-
-                        save_df(cdf, cent_out_fpath)
-                        if print_details:
-                            print("Saving {} complete. Checking file existence...".format(cent_out_fpath.name))
-
-                        if cent_out_fpath.exists():
-                            if print_details:
-                                print("Confirmed {} exists!".format(cent_out_fpath.name))
-                            to_return = True
-                        else:
-                            if print_details:
-                                print("WARNING: {} doesn't exist but it should?!".format(cent_out_fpath.name))
-                            to_return = False
-
-                        if print_details:
-                            print("Moving onto next file...")
-
-                        del df, cdf
-                        gc.collect()
-                        return to_return
-
-                    else:
-
-                        if print_details:
-                            print("No events found! Saving empty dataframes.")
-                        save_df(empty_raw_df(include_energy=include_energy), out_fpath)
-                        save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath)
-
-                        gc.collect()
-
-                    return True
-
-            except Exception as e:
 
                 if print_details:
-                    print(f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on.")
+                    print(
+                        f"-> Processing {tpx3_fpath.name}, size: {tpx3_fpath_size / (1024 * 1024):.1f} MB"
+                    )
+
+                if tpx3_fpath_size == 0:
+                    num_events = 0
+                else:
+                    df = drop_zero_tot(tpx_to_raw_df(tpx3_fpath))
+                    num_events = df.shape[0]
+
+                if num_events > 0:
+                    if print_details:
+                        print(
+                            f"Loading {tpx3_fpath.name} complete. {num_events} events found."
+                        )
+
+                    cdf = process_raw_df(
+                        df,
+                        tw,
+                        radius,
+                        energy_calib=energy_calib,
+                        timewalk_correct=timewalk_correct,
+                        trim_correct=trim_correct,
+                    )
+
+                    cdf.loc[cdf["xc"] >= 255.5, "xc"] += (
+                        2  # maybe we should put this somewhere else...
+                    )
+                    cdf.loc[cdf["yc"] >= 255.5, "yc"] += 2
+
+                    if print_details:
+                        print(
+                            f"Clustering and centroiding complete. Saving to {cent_out_fpath.name}..."
+                        )
+
+                    save_df(cdf, cent_out_fpath)
+                    if print_details:
+                        print(
+                            f"Saving {cent_out_fpath.name} complete. Checking file existence..."
+                        )
+
+                    if cent_out_fpath.exists():
+                        if print_details:
+                            print(f"Confirmed {cent_out_fpath.name} exists!")
+                        to_return = True
+                    else:
+                        if print_details:
+                            print(
+                                f"WARNING: {cent_out_fpath.name} doesn't exist but it should?!"
+                            )
+                        to_return = False
+
+                    if print_details:
+                        print("Moving onto next file...")
+
+                    del df, cdf
+                    gc.collect()
+                    return to_return
+
+                if print_details:
+                    print("No events found! Saving empty dataframes.")
+                save_df(empty_raw_df(include_energy=include_energy), out_fpath)
+                save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath)
+
+                gc.collect()
+
+                return True
+
+            except Exception as e:
+                if print_details:
+                    print(
+                        f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on."
+                    )
                     return False
 
-        else:
-            if print_details:
-                print("File was not a .tpx3 file. Moving onto next file.")
-                return False
-
-    else:
-        if print_details:
-            print("File does not exist. Moving onto next file.")
+        elif print_details:
+            print("File was not a .tpx3 file. Moving onto next file.")
             return False
+
+    elif print_details:
+        print("File does not exist. Moving onto next file.")
+        return False
 
 
 def convert_tpx3_files_parallel(
-    fpaths: Union[List[str], List[Path]], extension=f_type.PARQUET, num_workers: int = None, trim_correct: Union[str, Path] = None, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: list[str] | list[Path],
+    extension=f_type.PARQUET,
+    num_workers: int = None,
+    trim_correct: str | Path = None,
+    energy_calib_fpath: str | Path = None,
+    **kwargs,
 ):
     """
     Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx3_file().
@@ -979,9 +1070,13 @@ def convert_tpx3_files_parallel(
     """
     if len(fpaths) > 0:
         if num_workers is None:
-            max_workers = min(multiprocessing.cpu_count() - 4, len(fpaths))  # Leave 4 cores free
+            max_workers = min(
+                multiprocessing.cpu_count() - 4, len(fpaths)
+            )  # Leave 4 cores free
         else:
-            max_workers = min(num_workers, len(fpaths))  # Don't use more workers than files
+            max_workers = min(
+                num_workers, len(fpaths)
+            )  # Don't use more workers than files
 
         # Load the mask once
         trim_mask = trim_corr_file(trim_correct)
@@ -995,12 +1090,22 @@ def convert_tpx3_files_parallel(
                 print(f"Failed to load calibration: {e}")
 
         # Pass the preloaded mask to all workers
-        worker_func = partial(convert_tpx3_file, extension=extension, trim_correct=trim_mask,
-                              energy_calib=energy_calib, **kwargs)
+        worker_func = partial(
+            convert_tpx3_file,
+            extension=extension,
+            trim_correct=trim_mask,
+            energy_calib=energy_calib,
+            **kwargs,
+        )
 
         with multiprocessing.Pool(processes=max_workers) as pool:
-            results = list(tqdm(pool.imap_unordered(worker_func, fpaths),
-                           total=len(fpaths), desc="Processing files"))
+            results = list(
+                tqdm(
+                    pool.imap_unordered(worker_func, fpaths),
+                    total=len(fpaths),
+                    desc="Processing files",
+                )
+            )
 
         # Count successes
         num_true = sum(results)
@@ -1011,7 +1116,12 @@ def convert_tpx3_files_parallel(
 
 
 def convert_tpx3_files(
-    fpaths: Union[List[str], List[Path]], extension: str = f_type.PARQUET, trim_correct: Union[str, Path] = None, print_details: bool = True, energy_calib_fpath: Union[str, Path] = None, **kwargs
+    fpaths: list[str] | list[Path],
+    extension: str = f_type.PARQUET,
+    trim_correct: str | Path = None,
+    print_details: bool = True,
+    energy_calib_fpath: str | Path = None,
+    **kwargs,
 ):
     """
     Convert a list of .tpx3 files in a single process using convert_tpx3_file().
@@ -1042,5 +1152,11 @@ def convert_tpx3_files(
 
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
-        convert_tpx3_file(file, extension=extension, trim_correct=trim_mask,
-                         print_details=print_details, energy_calib=energy_calib, **kwargs)
+        convert_tpx3_file(
+            file,
+            extension=extension,
+            trim_correct=trim_mask,
+            print_details=print_details,
+            energy_calib=energy_calib,
+            **kwargs,
+        )
