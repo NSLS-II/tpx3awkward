@@ -180,3 +180,10 @@ platforms = ["osx-arm64"]
 
 [tool.pixi.pypi-dependencies]
 tpx3awkward = { path = ".", editable = true }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+
+[tool.pixi.feature.test.tasks]
+test = "pytest"
