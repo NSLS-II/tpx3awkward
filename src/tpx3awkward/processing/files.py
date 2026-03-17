@@ -1,6 +1,45 @@
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+
+
+def trim_corr_file(
+    mask_fpath: str = "/nsls2/users/jgoodrich/proposals/2025-1/qmicroscope/jgoodrich/new_clustering/bool_mask_total.csv",
+):
+    """
+    Load a boolean mask from a file, supporting .npy and .csv formats.
+
+    Parameters:
+    -----------
+    mask_fpath : str, optional
+        Path to the mask file. Supports `.npy` (NumPy binary) and `.csv` (comma-separated values).
+        Defaults to a predefined file path.
+
+    Returns:
+    --------
+    np.ndarray or None
+        A NumPy boolean array if the file is successfully loaded.
+        Returns `None` if the file format is unsupported.
+
+    Notes:
+    ------
+    - If the file is `.npy`, it is loaded using `np.load()` and converted to `bool`.
+    - If the file is `.csv`, it is loaded using `np.loadtxt()` with `delimiter=','` and converted to `bool`.
+    - Prints a message and returns `None` for unsupported file formats.
+    """
+    if mask_fpath is None:
+        return None
+
+    mask_fpath = Path(mask_fpath)
+
+    if mask_fpath.suffix == ".npy":
+        return np.load(mask_fpath).astype(bool)
+    if mask_fpath.suffix == ".csv":
+        return np.loadtxt(mask_fpath, delimiter=",").astype(bool)
+    print("Unsupported file format. Use .npy or .csv. Returning None.")
+    return None
+
 
 def find_unmatched_tpx3_files(directory_list, reprocess=False):
 
@@ -31,16 +70,18 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
         existing_h5_files = [p for p in h5_dir.iterdir() if p.suffix in vars(f_type).values()]
 
         # Check which _cent.h5 files are missing
-        unmatched_files.extend(tpx3_file for tpx3_file, h5_cent_file in zip(
-            tpx3_files, h5_cent_files) if h5_cent_file not in existing_h5_files)
+        unmatched_files.extend(
+            tpx3_file
+            for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files)
+            if h5_cent_file not in existing_h5_files
+        )
 
     if reprocess:
         return all_tpx3_files
-    else:
-        return unmatched_files
+    return unmatched_files
 
 
-def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET, cent: bool = False):
+def converted_path(filepath: Union[str, Path], extension: str = f_type.PARQUET, cent: bool = False):
     """
     Converts .tpx3 file path(s) to corresponding output file path(s).
     Handles individual strings, Path objects, lists, or numpy arrays.
@@ -50,7 +91,7 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET,
     Returns Path objects.
     """
     if isinstance(filepath, (list, np.ndarray)):
-        return [converted_path(fp, extension = extension, cent = cent) for fp in filepath]
+        return [converted_path(fp, extension=extension, cent=cent) for fp in filepath]
 
     filepath = Path(str(filepath).replace("file:", ""))
 
@@ -60,14 +101,15 @@ def converted_path(filepath: Union[str, Path] , extension: str = f_type.PARQUET,
     if "/nsls2/data/chx/proposals/" in str(filepath):
         out_path = str(filepath).replace("/assets/", "/Compressed_Data/")
     else:
-        if not ("/nsls2/data/chx/legacy/" in str(filepath)):
+        if "/nsls2/data/chx/legacy/" not in str(filepath):
             warnings.warn(
-                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory")
+                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory"
+            )
         out_path = str(filepath)
     # else:
     #     raise ValueError(f"Unknown path format: {filepath}")
 
-    return Path(out_path.replace(".tpx3", f"{"_cent" if cent else ""}{extension}"))
+    return Path(out_path.replace(".tpx3", f"{'_cent' if cent else ''}{extension}"))
 
 
 def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
@@ -94,10 +136,10 @@ def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
             df.to_parquet(
                 fpath,
                 engine="pyarrow",
-                index=False,   # important: do not rely on pandas index
+                index=False,  # important: do not rely on pandas index
                 compression="snappy",
             )
         case _:
             raise TypeError(f"unknown/unimplemented file type: {fpath.suffix}")
 
-    #df.to_hdf(fpath, key="df", format="table", mode="w")
+    # df.to_hdf(fpath, key="df", format="table", mode="w")

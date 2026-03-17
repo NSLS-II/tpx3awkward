@@ -152,9 +152,7 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
         Arrays of pixel coordinates, ToT, and timestamps.
     """
     msg, heartbeat_time = np.uint64(msg), np.uint64(heartbeat_time)  # Force types
-    x, y = decode_xy(
-        msg, chip
-    )  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
+    x, y = decode_xy(msg, chip)  # or use x1, y1 = calculateXY(msg, chip) from the Vendor's code
     # ToA is 14 bits
     ToA = (msg >> np.uint(30)) & np.uint(0x3FFF)
     # ToT is 10 bits; report in ns
@@ -179,9 +177,7 @@ def decode_message(msg, chip, heartbeat_time: np.uint64 = 0):
     elif diff == -1 or diff == 3:
         heartbeat_time += np.uint(0x10000000)
     # Construct globaltime
-    global_time = (heartbeat_time & np.uint(0xFFFFFFFC0000000)) | (
-        ToA_coarse & np.uint(0x3FFFFFFF)
-    )
+    global_time = (heartbeat_time & np.uint(0xFFFFFFFC0000000)) | (ToA_coarse & np.uint(0x3FFFFFFF))
     # Phase correction
     phase = np.uint((x / 2) % 16) or np.uint(16)
     # Construct timestamp with phase correction
@@ -220,9 +216,7 @@ def _ingest_raw_data(data):
         elif matches_nibble(msg, 0xB):
             # Type 2: photon event (id'd via 0xB upper nibble)
             chips[photon_count] = chip_indx
-            _x, _y, _tot, _ts = decode_message(
-                msg, chip_indx, heartbeat_time=heartbeat_time
-            )
+            _x, _y, _tot, _ts = decode_message(msg, chip_indx, heartbeat_time=heartbeat_time)
             x[photon_count] = _x
             y[photon_count] = _y
             tot[photon_count] = _tot
@@ -232,9 +226,7 @@ def _ingest_raw_data(data):
             if hb_init_flag and (photon_count > 0):
                 prev_ts = ts[:photon_count]  # This portion needs to be adjusted
                 # Find what the current timestamp would be without global heartbeat
-                _, _, _, _ts_0 = decode_message(
-                    msg, chip_indx, heartbeat_time=np.uint64(0)
-                )
+                _, _, _, _ts_0 = decode_message(msg, chip_indx, heartbeat_time=np.uint64(0))
                 # Check if there is a SPIDR rollover in the beginning of the file before the heartbeat
                 head_max = max(prev_ts[:10])
                 tail_min = min(prev_ts[-10:])
@@ -263,15 +255,11 @@ def _ingest_raw_data(data):
                 if heartbeat_lsb is not None:
                     if heartbeat_msb is None:
                         hb_init_flag = True
-                    heartbeat_msb = (
-                        (msg >> np.uint(16)) & np.uint64(0xFFFF)
-                    ) << np.uint(32)
+                    heartbeat_msb = ((msg >> np.uint(16)) & np.uint64(0xFFFF)) << np.uint(32)
                     heartbeat_time = heartbeat_msb | heartbeat_lsb
                     # TODO the c++ code has large jump detection, do not understand why
             else:
-                raise Exception(
-                    f"Unknown subheader {subheader} in the Global Timestamp message"
-                )
+                raise Exception(f"Unknown subheader {subheader} in the Global Timestamp message")
 
             msg_run_count += 1
 
@@ -316,8 +304,7 @@ def ingest_raw_data(data: IA) -> dict[str, NDArray]:
        Keys of x, y, ToT, chip_number
     """
     return {
-        k.strip(): v
-        for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data))
+        k.strip(): v for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data))
     }
 
 
