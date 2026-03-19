@@ -303,10 +303,7 @@ def ingest_raw_data(data: IA) -> dict[str, NDArray]:
     Dict[str, NDArray]
        Keys of x, y, ToT, chip_number
     """
-    return {
-        k.strip(): v
-        for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data), strict=True)
-    }
+    return {k.strip(): v for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data), strict=True)}
 
 
 def tpx_to_raw_df(fpath: str | Path) -> pd.DataFrame:
@@ -324,5 +321,6 @@ def tpx_to_raw_df(fpath: str | Path) -> pd.DataFrame:
        DataFrame of raw events from the .tpx3 file.
     """
     raw_df = pd.DataFrame(ingest_raw_data(raw_as_numpy(fpath)))
-    # should we specify the sorting algorithm? at this point? it should be sorted anyway, but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
+    # should we specify the sorting algorithm? at this point? it should be sorted anyway,
+    # but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
     return raw_df.sort_values("t").reset_index(drop=True)

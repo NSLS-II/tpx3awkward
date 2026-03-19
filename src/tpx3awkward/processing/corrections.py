@@ -23,13 +23,9 @@ def add_centroid_cols(df: pd.DataFrame, gap: bool = True) -> pd.DataFrame:
         df.loc[df["xc"] >= 255.5, "xc"] += 2
         df.loc[df["yc"] >= 255.5, "yc"] += 2
 
-    df["x"] = np.round(df["xc"]).astype(
-        np.uint16
-    )  # sometimes you just want to know the closest pixel
+    df["x"] = np.round(df["xc"]).astype(np.uint16)  # sometimes you just want to know the closest pixel
     df["y"] = np.round(df["yc"]).astype(np.uint16)
-    df["t_ns"] = (
-        df["t"].astype(np.float64) * 1.5625
-    )  # better way to convert to ns while maintaining precision?
+    df["t_ns"] = df["t"].astype(np.float64) * 1.5625  # better way to convert to ns while maintaining precision?
     if "t_corr" in df:
         df["t_corr_ns"] = df["t_corr"].astype(np.float64) * 1.5625
 

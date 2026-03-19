@@ -123,9 +123,7 @@ def centroid_clusters(
                     if timewalk_correct:
                         t_corr[cluster_id] = events[event, 3] - timewalk_corr_exp(_ToT_max)
                     ToT_max[cluster_id] = _ToT_max
-                xc[cluster_id] += (
-                    events[event, 0] * events[event, 2]
-                )  # x and y centroids by time over threshold
+                xc[cluster_id] += events[event, 0] * events[event, 2]  # x and y centroids by time over threshold
                 yc[cluster_id] += events[event, 1] * events[event, 2]
                 ToT_sum[cluster_id] += events[event, 2]  # calcuate sum
                 n[cluster_id] += np.ubyte(1)  # number of events in cluster
@@ -187,9 +185,7 @@ def cluster_raw_df(
     if trim_correct is not None:
         df = trim_corr(df, trim_correct)
     if include_energy:
-        df["e"] = estimate_energies(
-            df["x"].to_numpy(), df["y"].to_numpy(), df["ToT"].to_numpy(), energy_calib
-        )
+        df["e"] = estimate_energies(df["x"].to_numpy(), df["y"].to_numpy(), df["ToT"].to_numpy(), energy_calib)
     cluster_labels, events = cluster(df, tw, radius, include_energy=include_energy)
     df["cluster_id"] = cluster_labels
     cluster_array = group_indices(cluster_labels)
@@ -201,9 +197,7 @@ def cluster_raw_df(
     )
 
     return (
-        pd.DataFrame(
-            ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct)
-        )
+        pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct))
         .sort_values("t")
         .reset_index(drop=True)
     )

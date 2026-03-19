@@ -96,9 +96,7 @@ def convert_tpx3_file(
                     print(f"-> {tpx3_fpath.name} already processed, skipping.")
                     return False
 
-                logger.info(
-                    f"-> Processing {tpx3_fpath.name}, size: {tpx3_fpath_size / (1024 * 1024):.1f} MB"
-                )
+                logger.info(f"-> Processing {tpx3_fpath.name}, size: {tpx3_fpath_size / (1024 * 1024):.1f} MB")
 
                 if tpx3_fpath_size == 0:
                     num_events = 0
@@ -121,14 +119,10 @@ def convert_tpx3_file(
                     cdf.loc[cdf["xc"] >= 255.5, "xc"] += 2
                     cdf.loc[cdf["yc"] >= 255.5, "yc"] += 2
 
-                    logger.info(
-                        f"Clustering and centroiding complete. Saving to {cent_out_fpath.name}..."
-                    )
+                    logger.info(f"Clustering and centroiding complete. Saving to {cent_out_fpath.name}...")
 
                     save_df(cdf, cent_out_fpath)
-                    logger.info(
-                        f"Saving {cent_out_fpath.name} complete. Checking file existence..."
-                    )
+                    logger.info(f"Saving {cent_out_fpath.name} complete. Checking file existence...")
 
                     if cent_out_fpath.exists():
                         logger.info(f"Confirmed {cent_out_fpath.name} exists!")
@@ -147,9 +141,7 @@ def convert_tpx3_file(
                 save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath)
                 gc.collect()
             except Exception as e:
-                logger.info(
-                    f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on."
-                )
+                logger.info(f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on.")
                 return False
 
             return True
@@ -157,75 +149,6 @@ def convert_tpx3_file(
         return False
     logger.info("File does not exist. Moving onto next file.")
     return False
-
-
-def convert_tpx3_files_parallel(
-    fpaths: list[str] | list[Path],
-    extension=f_type.PARQUET,
-    num_workers: int | None = None,
-    trim_correct: str | Path | None = None,
-    energy_calib_fpath: str | Path | None = None,
-    **kwargs,
-):
-    """
-    Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx3_file().
-
-    Parameters
-    ----------
-    fpaths : Union[List[str], List[Path]]
-        List of .tpx3 file paths to process.
-    extension: str
-        type of file format (.h5 , .parquet) to export to. Can use internal f_type namespace to alias
-    num_workers : int, optional
-        Number of worker processes to use. Defaults to (CPU count - 4) to leave room for other tasks.
-    trim_mask_fpath : str, optional
-        Path to the trim correction mask. If None, no correction is applied.
-    energy_calib_fpath: np.ndarray = None
-        fpath pointing to energy estimation parameters array saved as .npy file, if not specified then energy won't be estimated.
-    **kwargs : dict
-        Additional keyword arguments passed to `convert_tpx3_file()`.
-    """
-    if len(fpaths) > 0:
-        if num_workers is None:
-            max_workers = min(multiprocessing.cpu_count() - 4, len(fpaths))  # Leave 4 cores free
-        else:
-            max_workers = min(num_workers, len(fpaths))  # Don't use more workers than files
-
-        # Load the mask once
-        trim_mask = trim_corr_file(trim_correct)
-
-        # Load energy estimation params
-        energy_calib = None
-        if energy_calib_fpath is not None:
-            try:
-                energy_calib = np.load(energy_calib_fpath)
-            except Exception as e:
-                print(f"Failed to load calibration: {e}")
-
-        # Pass the preloaded mask to all workers
-        worker_func = partial(
-            convert_tpx3_file,
-            extension=extension,
-            trim_correct=trim_mask,
-            energy_calib=energy_calib,
-            **kwargs,
-        )
-
-        with multiprocessing.Pool(processes=max_workers) as pool:
-            results = list(
-                tqdm(
-                    pool.imap_unordered(worker_func, fpaths),
-                    total=len(fpaths),
-                    desc="Processing files",
-                )
-            )
-
-        # Count successes
-        num_true = sum(results)
-    else:
-        num_true = 0
-
-    print(f"Successfully converted {num_true} out of {len(fpaths)}!")
 
 
 def convert_tpx3_files(
@@ -273,3 +196,73 @@ def convert_tpx3_files(
             energy_calib=energy_calib,
             **kwargs,
         )
+
+
+def convert_tpx3_files_parallel(
+    fpaths: list[str] | list[Path],
+    extension=f_type.PARQUET,
+    num_workers: int | None = None,
+    trim_correct: str | Path | None = None,
+    energy_calib_fpath: str | Path | None = None,
+    **kwargs,
+):
+    """
+    Convert a list of .tpx3 files in parallel using multiprocessing and convert_tpx3_file().
+
+    Parameters
+    ----------
+    fpaths : Union[List[str], List[Path]]
+        List of .tpx3 file paths to process.
+    extension: str
+        type of file format (.h5 , .parquet) to export to. Can use internal f_type namespace to alias
+    num_workers : int, optional
+        Number of worker processes to use. Defaults to (CPU count - 4) to leave room for other tasks.
+    trim_mask_fpath : str, optional
+        Path to the trim correction mask. If None, no correction is applied.
+    energy_calib_fpath: np.ndarray = None
+        fpath pointing to energy estimation parameters array saved as .npy file.
+        if not specified then energy won't be estimated.
+    **kwargs : dict
+        Additional keyword arguments passed to `convert_tpx3_file()`.
+    """
+    if len(fpaths) > 0:
+        if num_workers is None:
+            max_workers = min(multiprocessing.cpu_count() - 4, len(fpaths))  # Leave 4 cores free
+        else:
+            max_workers = min(num_workers, len(fpaths))  # Don't use more workers than files
+
+        # Load the mask once
+        trim_mask = trim_corr_file(trim_correct)
+
+        # Load energy estimation params
+        energy_calib = None
+        if energy_calib_fpath is not None:
+            try:
+                energy_calib = np.load(energy_calib_fpath)
+            except Exception as e:
+                print(f"Failed to load calibration: {e}")
+
+        # Pass the preloaded mask to all workers
+        worker_func = partial(
+            convert_tpx3_file,
+            extension=extension,
+            trim_correct=trim_mask,
+            energy_calib=energy_calib,
+            **kwargs,
+        )
+
+        with multiprocessing.Pool(processes=max_workers) as pool:
+            results = list(
+                tqdm(
+                    pool.imap_unordered(worker_func, fpaths),
+                    total=len(fpaths),
+                    desc="Processing files",
+                )
+            )
+
+        # Count successes
+        num_true = sum(results)
+    else:
+        num_true = 0
+
+    print(f"Successfully converted {num_true} out of {len(fpaths)}!")
