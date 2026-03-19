@@ -1,7 +1,11 @@
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+
+f_type = SimpleNamespace(HDF=".h5", PARQUET=".parquet")
 
 
 def trim_corr_file(
@@ -53,7 +57,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
         # Get all .tpx3 files
         tpx3_files = list(Path(tpx3_dir).glob("*.tpx3"))
 
-        if reprocess == True:
+        if reprocess:
             all_tpx3_files.extend(tpx3_files)
             continue
 
@@ -72,7 +76,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
         # Check which _cent.h5 files are missing
         unmatched_files.extend(
             tpx3_file
-            for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files)
+            for tpx3_file, h5_cent_file in zip(tpx3_files, h5_cent_files, strict=True)
             if h5_cent_file not in existing_h5_files
         )
 
@@ -81,7 +85,7 @@ def find_unmatched_tpx3_files(directory_list, reprocess=False):
     return unmatched_files
 
 
-def converted_path(filepath: Union[str, Path], extension: str = f_type.PARQUET, cent: bool = False):
+def converted_path(filepath: str | Path, extension: str = f_type.PARQUET, cent: bool = False):
     """
     Converts .tpx3 file path(s) to corresponding output file path(s).
     Handles individual strings, Path objects, lists, or numpy arrays.
@@ -103,7 +107,8 @@ def converted_path(filepath: Union[str, Path], extension: str = f_type.PARQUET, 
     else:
         if "/nsls2/data/chx/legacy/" not in str(filepath):
             warnings.warn(
-                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory"
+                "unexpected file path used, operation will proceed but it is suggested to confirm correct target directory",
+                stacklevel=2,
             )
         out_path = str(filepath)
     # else:
@@ -112,7 +117,7 @@ def converted_path(filepath: Union[str, Path], extension: str = f_type.PARQUET, 
     return Path(out_path.replace(".tpx3", f"{'_cent' if cent else ''}{extension}"))
 
 
-def save_df(df: pd.DataFrame, fpath: Union[str, Path]):
+def save_df(df: pd.DataFrame, fpath: str | Path):
     """
     Save a Pandas DataFrame to a parquet file, ensuring that all necessary directories exist.
 

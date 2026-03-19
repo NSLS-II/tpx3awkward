@@ -35,13 +35,13 @@ def drop_zero_tot(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def convert_tpx3_file(
-    tpx3_fpath: Union[str, Path],
+    tpx3_fpath: str | Path,
     extension: str = f_type.PARQUET,
     tw: float = DEFAULT_CLUSTER_TW,
     radius: int = DEFAULT_CLUSTER_RADIUS,
-    energy_calib: np.ndarray = None,
+    energy_calib: np.ndarray | None = None,
     timewalk_correct: bool = False,
-    trim_correct: bool = None,
+    trim_correct: bool = False,
     print_details: bool = False,
     overwrite: bool = True,
 ):
@@ -145,30 +145,26 @@ def convert_tpx3_file(
                 logger.info("No events found! Saving empty dataframes.")
                 save_df(empty_raw_df(include_energy=include_energy), out_fpath)
                 save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath)
-
                 gc.collect()
-
-                return True
-
             except Exception as e:
                 logger.info(
                     f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on."
                 )
                 return False
-        else:
-            logger.info("File was not a .tpx3 file. Moving onto next file.")
-            return False
-    else:
-        logger.info("File does not exist. Moving onto next file.")
+
+            return True
+        logger.info("File was not a .tpx3 file. Moving onto next file.")
         return False
+    logger.info("File does not exist. Moving onto next file.")
+    return False
 
 
 def convert_tpx3_files_parallel(
-    fpaths: Union[List[str], List[Path]],
+    fpaths: list[str] | list[Path],
     extension=f_type.PARQUET,
     num_workers: int | None = None,
-    trim_correct: Union[str, Path] = None,
-    energy_calib_fpath: Union[str, Path] = None,
+    trim_correct: str | Path | None = None,
+    energy_calib_fpath: str | Path | None = None,
     **kwargs,
 ):
     """
@@ -233,11 +229,11 @@ def convert_tpx3_files_parallel(
 
 
 def convert_tpx3_files(
-    fpaths: Union[List[str], List[Path]],
+    fpaths: list[str] | list[Path],
     extension: str = f_type.PARQUET,
-    trim_correct: Union[str, Path] = None,
+    trim_correct: str | Path | None = None,
     print_details: bool = True,
-    energy_calib_fpath: Union[str, Path] = None,
+    energy_calib_fpath: str | Path | None = None,
     **kwargs,
 ):
     """

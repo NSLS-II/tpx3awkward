@@ -203,8 +203,8 @@ def _ingest_raw_data(data):
     for msg in data:
         if is_packet_header(msg):
             # Type 1: packet header (id'd via TPX3 magic number)
-            # if expected_msg_count != msg_run_count:
-            # print("Missing messages!", msg)
+            if expected_msg_count != msg_run_count:
+                print("Missing messages!", msg)
 
             # extract the chip number for the following photon events
             chip_indx = np.uint8(get_block(msg, 8, 32))
@@ -304,7 +304,8 @@ def ingest_raw_data(data: IA) -> dict[str, NDArray]:
        Keys of x, y, ToT, chip_number
     """
     return {
-        k.strip(): v for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data))
+        k.strip(): v
+        for k, v in zip(["x", " y", " ToT", " t", " chip"], _ingest_raw_data(data), strict=True)
     }
 
 
