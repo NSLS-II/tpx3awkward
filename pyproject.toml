@@ -101,7 +101,7 @@ report.exclude_also = [
 
 
 [tool.ruff]
-line-length = 100
+line-length = 125
 
 [tool.ruff.lint]
 extend-select = [
@@ -143,6 +143,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
+"docs/**" = ["E501"]
 
 
 [tool.pixi.workspace]
