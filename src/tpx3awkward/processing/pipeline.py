@@ -1,16 +1,16 @@
 import gc
+import logging
 import multiprocessing
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-import logging
 
 import numpy as np
 import pandas as pd
-from cluster import cluster_raw_df, DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW
-from files import save_df, trim_corr_file, converted_path
-from schemas import empty_cent_df, empty_raw_df
+from cluster import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW, cluster_raw_df
 from decoding import tpx_to_raw_df
+from files import converted_path, save_df, trim_corr_file
+from schemas import empty_cent_df, empty_raw_df
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,12 @@ def convert_tpx3_file(
     energy_calib: np.ndarray = None
         numpy array of dimension (514, 514, 4) and type float64 that contains the parameters to the E(ToT) function
     """
+
+    if print_details:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
+
     if isinstance(tpx3_fpath, str):
         tpx3_fpath = Path(tpx3_fpath)
 
@@ -90,7 +96,10 @@ def convert_tpx3_file(
                     print(f"-> {tpx3_fpath.name} already processed, skipping.")
                     return False
 
-                logger.info(f"-> Processing {tpx3_fpath.name}, size: {tpx3_fpath_size / (1024 * 1024):.1f} MB")
+                logger.info(
+                    f"-> Processing {tpx3_fpath.name}, size: {tpx3_fpath_size / (1024 * 1024):.1f} MB"
+                )
+
                 if tpx3_fpath_size == 0:
                     num_events = 0
                 else:
@@ -98,8 +107,7 @@ def convert_tpx3_file(
                     num_events = df.shape[0]
 
                 if num_events > 0:
-                    if print_details:
-                        print(f"Loading {tpx3_fpath.name} complete. {num_events} events found.")
+                    logger.info(f"Loading {tpx3_fpath.name} complete. {num_events} events found.")
 
                     cdf = cluster_raw_df(
                         df,
@@ -113,32 +121,28 @@ def convert_tpx3_file(
                     cdf.loc[cdf["xc"] >= 255.5, "xc"] += 2
                     cdf.loc[cdf["yc"] >= 255.5, "yc"] += 2
 
-                    if print_details:
-                        print(
-                            f"Clustering and centroiding complete. Saving to {cent_out_fpath.name}..."
-                        )
+                    logger.info(
+                        f"Clustering and centroiding complete. Saving to {cent_out_fpath.name}..."
+                    )
 
                     save_df(cdf, cent_out_fpath)
-                    if print_details:
-                        print(f"Saving {cent_out_fpath.name} complete. Checking file existence...")
+                    logger.info(
+                        f"Saving {cent_out_fpath.name} complete. Checking file existence..."
+                    )
 
                     if cent_out_fpath.exists():
-                        if print_details:
-                            print(f"Confirmed {cent_out_fpath.name} exists!")
+                        logger.info(f"Confirmed {cent_out_fpath.name} exists!")
                         to_return = True
                     else:
-                        if print_details:
-                            print(f"WARNING: {cent_out_fpath.name} doesn't exist but it should?!")
+                        logger.info(f"WARNING: {cent_out_fpath.name} doesn't exist but it should?!")
                         to_return = False
 
-                    if print_details:
-                        print("Moving onto next file...")
+                    logger.info("Moving onto next file...")
                     del df, cdf
                     gc.collect()
                     return to_return
 
-                if print_details:
-                    print("No events found! Saving empty dataframes.")
+                logger.info("No events found! Saving empty dataframes.")
                 save_df(empty_raw_df(include_energy=include_energy), out_fpath)
                 save_df(empty_cent_df(include_energy=include_energy), cent_out_fpath)
 
@@ -147,17 +151,15 @@ def convert_tpx3_file(
                 return True
 
             except Exception as e:
-                if print_details:
-                    print(
-                        f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on."
-                    )
-                    return False
-
-        elif print_details:
-            print("File was not a .tpx3 file. Moving onto next file.")
+                logger.info(
+                    f"Conversion of {tpx3_fpath.name} failed due to {e.__class__.__name__}: {e}, moving on."
+                )
+                return False
+        else:
+            logger.info("File was not a .tpx3 file. Moving onto next file.")
             return False
-    elif print_details:
-        print("File does not exist. Moving onto next file.")
+    else:
+        logger.info("File does not exist. Moving onto next file.")
         return False
 
 
