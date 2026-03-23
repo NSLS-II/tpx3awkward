@@ -1,4 +1,5 @@
-from typing import Path, TypeVar
+from pathlib import Path
+from typing import TypeVar
 
 import numba
 import numpy as np

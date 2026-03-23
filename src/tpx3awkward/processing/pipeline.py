@@ -7,11 +7,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
-from cluster import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW, cluster_raw_df
-from decoding import tpx_to_raw_df
-from files import converted_path, save_df, trim_corr_file
-from schemas import empty_cent_df, empty_raw_df
 from tqdm import tqdm
+
+from .cluster import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW, cluster_raw_df
+from .decoding import tpx_to_raw_df
+from .files import converted_path, save_df, trim_corr_file
+from .schemas import empty_cent_df, empty_raw_df
 
 logger = logging.getLogger(__name__)
 f_type = SimpleNamespace(HDF=".h5", PARQUET=".parquet")
@@ -37,6 +38,7 @@ def drop_zero_tot(df: pd.DataFrame) -> pd.DataFrame:
 def convert_tpx3_file(
     tpx3_fpath: str | Path,
     extension: str = f_type.PARQUET,
+    output_dir: str | Path | None = None,
     tw: float = DEFAULT_CLUSTER_TW,
     radius: int = DEFAULT_CLUSTER_RADIUS,
     energy_calib: np.ndarray | None = None,
@@ -86,6 +88,9 @@ def convert_tpx3_file(
         if tpx3_fpath.suffix == ".tpx3":
             out_fpath = converted_path(tpx3_fpath, extension=extension, cent=False)
             cent_out_fpath = converted_path(tpx3_fpath, extension=extension, cent=True)
+
+            if output_dir:
+                cent_out_fpath = output_dir / cent_out_fpath.name
 
             try:
                 tpx3_fpath_size = tpx3_fpath.stat().st_size  # Get file size

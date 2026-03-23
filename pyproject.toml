@@ -37,7 +37,9 @@ dependencies = [
   "numpy",
   "pandas",
   "numba",
-  "tqdm"
+  "tqdm",
+  "pyarrow",
+  "tables",
 ]
 
 [project.urls]
