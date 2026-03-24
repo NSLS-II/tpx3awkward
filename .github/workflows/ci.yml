@@ -45,10 +45,6 @@ jobs:
         python-version: ["3.10", "3.14"]
         runs-on: [ubuntu-latest]
 
-        include:
-          - python-version: "pypy-3.11"
-            runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v6
         with:
