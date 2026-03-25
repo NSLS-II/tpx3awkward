@@ -4,10 +4,10 @@ from tpx3awkward._utils import convert_tpx3_file, convert_tpx3_files_parallel, d
 from tpx3awkward._utils import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW
 import pandas as pd
 
-test_folder = Path("tests/test_data")
-test_target = Path("tests/test_data/tpx_exp.tpx3")
-target_out_pq = Path("tests/test_data/tpx_exp_cent.parquet")
-target_out_hdf = Path("tests/test_data/tpx_exp.h5")
+test_folder = Path("tests/data")
+test_target = Path("tests/data/raw_test_data.tpx3")
+target_out_pq = Path("tests/data/raw_test_data.parquet")
+target_out_hdf = Path("tests/data/raw_test_data.h5")
 
 class TestIntegration:
     def clear_dir(self):

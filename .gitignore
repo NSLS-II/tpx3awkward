@@ -190,3 +190,6 @@ Thumbs.db
 # pixi-related files
 .pixi
 pixi.lock
+
+#vscode git/repo/workspace config 
+.vscode/
