@@ -1,23 +1,22 @@
-from tpx3awkward._utils import get_block, matches_nibble, get_spidr
-
 import numpy as np
 import pytest
+from tpx3awkward.processing.decoding import get_block, get_spidr, matches_nibble
 
 
-@pytest.fixture(scope="function")
+
+@pytest.fixture()
 def data(n=10):
-    data = np.zeros(n, dtype=np.uint64)
-    return data
+    return np.zeros(n, dtype=np.uint64)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture()
 def header_msg(chip=3):
     return (np.uint8(chip) << np.uint(32)) + np.uint64(861425748)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture()
 def empty_msg():
-    return np.uint64(0xb) << np.uint(60)
+    return np.uint64(0xB) << np.uint(60)
 
 
 def test_get_block(header_msg):
@@ -25,8 +24,8 @@ def test_get_block(header_msg):
 
 
 def test_matches_nibble():
-    msg = np.uint64(0xb) << np.uint(60)
-    assert matches_nibble(msg, 0xb)
+    msg = np.uint64(0xB) << np.uint(60)
+    assert matches_nibble(msg, 0xB)
 
 
 def test_get_spidr(empty_msg):
