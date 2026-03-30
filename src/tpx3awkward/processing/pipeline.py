@@ -159,6 +159,7 @@ def convert_tpx3_file(
 def convert_tpx3_files(
     fpaths: list[str] | list[Path],
     extension: str = f_type.PARQUET,
+    output_dir: str | Path | None = None,
     trim_correct: str | Path | None = None,
     print_details: bool = True,
     energy_calib_fpath: str | Path | None = None,
@@ -196,6 +197,7 @@ def convert_tpx3_files(
         convert_tpx3_file(
             file,
             extension=extension,
+            output_dir=output_dir,
             trim_correct=trim_mask,
             print_details=print_details,
             energy_calib=energy_calib,
