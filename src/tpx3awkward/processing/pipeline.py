@@ -90,6 +90,8 @@ def convert_tpx3_file(
             cent_out_fpath = converted_path(tpx3_fpath, extension=extension, cent=True)
 
             if output_dir:
+                output_dir = Path(output_dir)
+                out_fpath = output_dir / out_fpath.name
                 cent_out_fpath = output_dir / cent_out_fpath.name
 
             try:
