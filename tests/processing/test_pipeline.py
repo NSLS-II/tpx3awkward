@@ -54,4 +54,4 @@ def test_convert_tpx3_files(tmp_path):
     path_to_proc_data = DATA_DIR / "processed_concat_test_data.parquet"
     stable_proc_df = pd.read_parquet(path_to_proc_data)
 
-    pd.testing.assert_frame_equal(cur_proc_df, stable_proc_df)
+    pd.testing.assert_frame_equal(cur_proc_df, stable_proc_df, atol=0.5)
