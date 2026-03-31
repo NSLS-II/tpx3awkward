@@ -199,6 +199,6 @@ def cluster_raw_df(
 
     return (
         pd.DataFrame(ingest_cent_data(data, include_energy=include_energy, timewalk_correct=timewalk_correct))
-        .sort_values("t")
+        .sort_values(["t", "xc", "yc", "ToT_max", "ToT_sum"])
         .reset_index(drop=True)
     )

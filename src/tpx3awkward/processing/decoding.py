@@ -324,4 +324,4 @@ def tpx_to_raw_df(fpath: str | Path) -> pd.DataFrame:
     raw_df = pd.DataFrame(ingest_raw_data(raw_as_numpy(fpath)))
     # should we specify the sorting algorithm? at this point? it should be sorted anyway,
     # but I think dataframes need to be explicitly sorted for use in e.g. merge_asof?
-    return raw_df.sort_values("t").reset_index(drop=True)
+    return raw_df.sort_values(["t", "x", "y", "ToT"]).reset_index(drop=True)
