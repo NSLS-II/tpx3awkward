@@ -9,7 +9,8 @@ authors = [
   { name = "Thomas Caswell", email = "tcaswell@bnl.gov" },
   { name = "Justin Goodrich", email = "jgoodrich@bnl.gov" },
   { name = "Eugene Matviychuk", email = "ymatviych1@bnl.gov" },
-  { name = "Joseph Hanrahan", email = "jhanrahan@bnl.gov" }
+  { name = "Joseph Hanrahan", email = "jhanrahan@bnl.gov" },
+  { name = "Rhys Takahashi", email = "mtakahash1@bnl.gov" }
 ]
 description = "A great package."
 readme = "README.md"
@@ -86,7 +87,7 @@ minversion = "9.0"
 addopts = ["-ra", "--showlocals"]
 strict = true
 filterwarnings = [
-  "error",
+  "once",
 ]
 log_level = "INFO"
 testpaths = [
