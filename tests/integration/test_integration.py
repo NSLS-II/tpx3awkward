@@ -1,17 +1,11 @@
 from pathlib import Path
-import pytest
+
 import pandas as pd
-import time
 
-from tpx3awkward.processing.cluster import (
-    DEFAULT_CLUSTER_RADIUS,
-    DEFAULT_CLUSTER_TW,
-    cluster_raw_df
-)
-from tpx3awkward import tpx_to_raw_df, convert_tpx3_files_parallel, convert_tpx3_file
-from tpx3awkward.processing.files import find_unmatched_tpx3_files, f_type
+from tpx3awkward import convert_tpx3_file, convert_tpx3_files_parallel, tpx_to_raw_df
+from tpx3awkward.processing.cluster import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW, cluster_raw_df
+from tpx3awkward.processing.files import f_type, find_unmatched_tpx3_files
 from tpx3awkward.processing.pipeline import drop_zero_tot
-
 
 test_folder = Path(__file__).parents[1] / "data"
 test_target = test_folder / "raw_test_data.tpx3"

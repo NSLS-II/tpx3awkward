@@ -1,20 +1,20 @@
 import numpy as np
 import pytest
+
 from tpx3awkward.processing.decoding import get_block, get_spidr, matches_nibble
 
 
-
-@pytest.fixture()
+@pytest.fixture
 def data(n=10):
     return np.zeros(n, dtype=np.uint64)
 
 
-@pytest.fixture()
+@pytest.fixture
 def header_msg(chip=3):
     return (np.uint8(chip) << np.uint(32)) + np.uint64(861425748)
 
 
-@pytest.fixture()
+@pytest.fixture
 def empty_msg():
     return np.uint64(0xB) << np.uint(60)
 

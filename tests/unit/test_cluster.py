@@ -1,11 +1,6 @@
 from pathlib import Path
 
-from tpx3awkward.processing.cluster import (
-    DEFAULT_CLUSTER_RADIUS,
-    DEFAULT_CLUSTER_TW,
-    cluster,
-    cluster_raw_df
-)
+from tpx3awkward.processing.cluster import DEFAULT_CLUSTER_RADIUS, DEFAULT_CLUSTER_TW, cluster, cluster_raw_df
 from tpx3awkward.processing.decoding import (
     tpx_to_raw_df,
 )
