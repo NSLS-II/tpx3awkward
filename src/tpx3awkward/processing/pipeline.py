@@ -164,7 +164,7 @@ def convert_tpx3_files(
     output_dir: str | Path | None = None,
     trim_correct: str | Path | None = None,
     print_details: bool = True,
-    energy_calib_fpath: str | Path | None = None,
+    energy_calib: np.ndarray | str | Path | None = None,
     **kwargs,
 ):
     """
@@ -187,12 +187,11 @@ def convert_tpx3_files(
     trim_mask = trim_corr_file(trim_correct)
 
     # Load energy estimation params
-    energy_calib = None
-    if energy_calib_fpath is not None:
+    if isinstance(energy_calib, (str, Path)):
         try:
-            energy_calib = np.load(energy_calib_fpath)
-        except Exception as e:
-            print(f"Failed to load calibration: {e}")
+            energy_calib = np.load(energy_calib)
+        except Exception:
+            print("Failed to load calibration: {e}")
 
     # Process files sequentially with tqdm progress bar
     for file in tqdm(fpaths, desc="Processing files"):
